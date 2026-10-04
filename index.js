@@ -1,8 +1,18 @@
 import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
-import qrcode from 'qrcode-terminal';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import express from 'express';
 
-// Inicializar Gemini API
+const app = express();
+const port = process.env.PORT || 10000;
+
+app.get('/', (req, res) => {
+  res.send('Bot de WhatsApp activo');
+});
+
+app.listen(port, () => {
+  console.log(`Servidor activo en el puerto ${port}`);
+});
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const PROMPT_VENTAS = `
@@ -26,8 +36,10 @@ Si no es un comprobante de Yape legible, indica amablemente que no se pudo valid
 async function procesarMensaje(sock, msg) {
   try {
     const from = msg.key.remoteJid;
-    // Evitar responder a mensajes de grupos o del propio bot
     if (!from || from.endsWith('@g.us') || msg.key.fromMe) return;
+
+    // FILTRO: Si deseas ignorar contactos guardados, descomenta la siguiente línea:
+    // if (sock.store?.contacts[from]?.name) return;
 
     const messageType = Object.keys(msg.message)[0];
 
@@ -36,7 +48,6 @@ async function procesarMensaje(sock, msg) {
       console.log(`[YAPE] Procesando imagen enviada por ${from}`);
       await sock.sendMessage(from, { text: '🔍 Verificando comprobante de pago...' });
 
-      // Descargar la imagen del mensaje con Baileys
       const buffer = await sock.downloadMediaMessage(msg);
       const base64Image = buffer.toString('base64');
 
@@ -79,7 +90,6 @@ async function procesarMensaje(sock, msg) {
 }
 
 async function iniciarBot() {
-  // Guarda las credenciales de sesión en la carpeta 'auth_info'
   const { state, saveCreds } = await useMultiFileAuthState('auth_info');
 
   const sock = makeWASocket({
@@ -89,16 +99,25 @@ async function iniciarBot() {
 
   sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect, qr } = update;
+  // Solicitar código de emparejamiento si la sesión no está iniciada
+  if (!sock.authState.creds.registered) {
+    // Reemplaza con tu número de teléfono con código de país (ejemplo para Perú: 51963737843)
+    const numeroTelefono = process.env.BOT_PHONE_NUMBER || "51963737843"; 
+    
+    setTimeout(async () => {
+      const code = await sock.requestPairingCode(numeroTelefono);
+      console.log(`\n==================================================`);
+      console.log(`CÓDIGO DE VINCULACIÓN EN WHATSAPP: ${code}`);
+      console.log(`==================================================\n`);
+    }, 3000);
+  }
 
-    if (qr) {
-      console.log('\n--- ESCANEA ESTE CÓDIGO QR CON WHATSAPP ---');
-      qrcode.generate(qr, { small: true });
-    }
+  sock.ev.on('connection.update', (update) => {
+    const { connection, lastDisconnect } = update;
 
     if (connection === 'close') {
-      const shouldReconnect = (lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut);
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
       console.log('Conexión cerrada. Reconectando...', shouldReconnect);
       if (shouldReconnect) {
         iniciarBot();
