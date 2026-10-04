@@ -51,7 +51,10 @@ async function procesarMensaje(sock, msg) {
       const buffer = await sock.downloadMediaMessage(msg);
       const base64Image = buffer.toString('base64');
 
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const model = genAI.getGenerativeModel({ 
+        model: 'gemini-1.5-flash' 
+      });
+
       const result = await model.generateContent([
         PROMPT_YAPE,
         {
@@ -67,7 +70,7 @@ async function procesarMensaje(sock, msg) {
       return;
     }
 
-   // 2. PROCESAR TEXTO (Asistente de Ventas)
+    // 2. PROCESAR TEXTO (Asistente de Ventas)
     if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
       const textoUsuario = msg.message.conversation || msg.message.extendedTextMessage?.text;
       if (!textoUsuario) return;
@@ -76,7 +79,7 @@ async function procesarMensaje(sock, msg) {
 
       const model = genAI.getGenerativeModel({ 
         model: 'gemini-1.5-flash',
-        systemInstruction: PROMPT_VENTAS // Pasarlo directamente aquí al inicializar el modelo
+        systemInstruction: PROMPT_VENTAS
       });
 
       const chat = model.startChat();
