@@ -1,179 +1,120 @@
-import express from "express";
-import axios from "axios";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
+import qrcode from 'qrcode-terminal';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const app = express();
-app.use(express.json());
+// Inicializar Gemini API
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-const PORT = process.env.PORT || 3000;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
-const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "mi_token_secreto_123";
-
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-
-// Prompt del negocio para la atención de ventas
-const PROMPT_AGENCIA = `
-Eres un asesor de ventas experto de una agencia de desarrollo web.
-Tu objetivo es brindar información clara, persuasiva y concisa sobre el diseño, venta y alquiler de landing pages para negocios.
-Servicios principales:
-- Landing Pages optimizadas para conversión y ventas.
-- Planes de desarrollo a medida y alquiler mensual con hosting incluido.
-- Proceso rápido de entrega y adaptación al negocio del cliente.
-
-Instrucciones:
-- Responde de forma amigable, directa y profesional.
-- Mantén las respuestas breves y adaptadas a WhatsApp.
-- Si el cliente desea contratar o pagar, indícale que puede enviar su captura de pago de Yape directamente por este chat.
+const PROMPT_VENTAS = `
+Eres un asistente virtual experto en ventas para nuestra agencia de desarrollo web.
+Tu objetivo es brindar información clara sobre creación de páginas web, landing pages y soluciones digitales.
+Sé amable, profesional, conciso y orienta al cliente hacia cerrar una venta o consulta.
 `;
 
-// Endpoint de verificación del Webhook de Meta
-app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
+const PROMPT_YAPE = `
+Analiza la siguiente imagen y determina si es un comprobante de pago válido de Yape.
+Extrae obligatoriamente la siguiente información en formato texto simple:
+1. ¿Es un comprobante de Yape válido? (Sí / No)
+2. Monto yapeado (S/)
+3. Nombre del destinatario
+4. Nombre del emisor (si figura)
+5. Fecha y hora de la transacción
+6. Nro. de operación
+Si no es un comprobante de Yape legible, indica amablemente que no se pudo validar la imagen.
+`;
 
-  if (mode && token) {
-    if (mode === "subscribe" && token === VERIFY_TOKEN) {
-      console.log("WEBHOOK_VERIFIED");
-      return res.status(200).send(challenge);
-    } else {
-      return res.sendStatus(403);
-    }
-  }
-  res.sendStatus(400);
-});
-
-// Endpoint para recibir eventos de WhatsApp
-app.post("/webhook", async (req, res) => {
-  res.status(200).send("EVENT_RECEIVED");
-
+async function procesarMensaje(sock, msg) {
   try {
-    const entry = req.body.entry?.[0];
-    const changes = entry?.changes?.[0];
-    const value = changes?.value;
-    const message = value?.messages?.[0];
+    const from = msg.key.remoteJid;
+    // Evitar responder a mensajes de grupos o del propio bot
+    if (!from || from.endsWith('@g.us') || msg.key.fromMe) return;
 
-    if (message) {
-      const remitente = message.from;
-      await procesarMensaje(message, remitente);
-    }
-  } catch (error) {
-    console.error("Error al procesar el webhook:", error.message);
-  }
-});
+    const messageType = Object.keys(msg.message)[0];
 
-// Función para descargar la imagen enviada por WhatsApp y convertirla a Base64
-async function obtenerImagenBase64(mediaId) {
-  // 1. Obtener URL de descarga desde Meta Graph API
-  const urlRes = await axios.get(
-    `https://graph.facebook.com/v20.0/${mediaId}`,
-    {
-      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
-    }
-  );
+    // 1. PROCESAR IMÁGENES (Comprobante de Yape)
+    if (messageType === 'imageMessage') {
+      console.log(`[YAPE] Procesando imagen enviada por ${from}`);
+      await sock.sendMessage(from, { text: '🔍 Verificando comprobante de pago...' });
 
-  const mediaUrl = urlRes.data.url;
+      // Descargar la imagen del mensaje con Baileys
+      const buffer = await sock.downloadMediaMessage(msg);
+      const base64Image = buffer.toString('base64');
 
-  // 2. Descargar la imagen como ArrayBuffer
-  const imageRes = await axios.get(mediaUrl, {
-    headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
-    responseType: "arraybuffer",
-  });
-
-  // 3. Convertir a Base64
-  return Buffer.from(imageRes.data).toString("base64");
-}
-
-// Función principal de procesamiento con Gemini
-async function procesarMensaje(message, remitente) {
-  try {
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
-    // --- FLUJO 1: MENSAJE CON IMAGEN (Captura de Yape) ---
-    if (message.type === "image") {
-      await enviarMensajeWhatsApp(
-        remitente,
-        "Analizando tu comprobante de Yape, dame un momento..."
-      );
-
-      const base64Image = await obtenerImagenBase64(message.image.id);
-
-      const promptYape = `
-        Analiza esta imagen y determina si es un comprobante de pago válido de Yape.
-        Extrae los siguientes datos y responde de forma breve y clara en texto legible para WhatsApp:
-        1. Estado (¿Es pago válido/exitoso?): Sí / No
-        2. Monto transferido (en S/):
-        3. Nombre o destino que recibe el pago:
-        4. Fecha y hora del pago:
-      `;
-
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
       const result = await model.generateContent([
-        promptYape,
+        PROMPT_YAPE,
         {
           inlineData: {
             data: base64Image,
-            mimeType: message.image.mime_type || "image/jpeg",
-          },
-        },
+            mimeType: 'image/jpeg'
+          }
+        }
       ]);
 
-      const respuestaIA = result.response.text();
-      await enviarMensajeWhatsApp(remitente, respuestaIA);
+      const respuestaYape = result.response.text();
+      await sock.sendMessage(from, { text: respuestaYape });
       return;
     }
 
-    // --- FLUJO 2: MENSAJE DE TEXTO (Ventas / Consultas) ---
-    if (message.type === "text") {
-      const textoUsuario = message.text.body;
+    // 2. PROCESAR TEXTO (Asistente de Ventas)
+    if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
+      const textoUsuario = msg.message.conversation || msg.message.extendedTextMessage?.text;
+      if (!textoUsuario) return;
 
+      console.log(`[VENTAS] Mensaje de ${from}: ${textoUsuario}`);
+
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
       const chat = model.startChat({
-        systemInstruction: PROMPT_AGENCIA,
+        systemInstruction: PROMPT_VENTAS
       });
 
-      // Importante: sendMessage recibe el string directamente para evitar "request is not iterable"
       const result = await chat.sendMessage(textoUsuario);
-      const respuestaIA = result.response.text();
+      const respuestaVentas = result.response.text();
 
-      await enviarMensajeWhatsApp(remitente, respuestaIA);
+      await sock.sendMessage(from, { text: respuestaVentas });
     }
   } catch (error) {
-    console.error("Error dentro de procesarMensaje:", error);
-    await enviarMensajeWhatsApp(
-      remitente,
-      "Tuvimos un inconveniente al procesar tu solicitud. Por favor intenta de nuevo."
-    );
+    console.error('Error al procesar el mensaje:', error);
   }
 }
 
-// Función para enviar mensajes vía Meta Cloud API
-async function enviarMensajeWhatsApp(to, text) {
-  try {
-    await axios.post(
-      `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages`,
-      {
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to: to,
-        type: "text",
-        text: { body: text },
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-          "Content-Type": "application/json",
-        },
+async function iniciarBot() {
+  // Guarda las credenciales de sesión en la carpeta 'auth_info'
+  const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+
+  const sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: false
+  });
+
+  sock.ev.on('creds.update', saveCreds);
+
+  sock.ev.on('connection.update', (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    if (qr) {
+      console.log('\n--- ESCANEA ESTE CÓDIGO QR CON WHATSAPP ---');
+      qrcode.generate(qr, { small: true });
+    }
+
+    if (connection === 'close') {
+      const shouldReconnect = (lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut);
+      console.log('Conexión cerrada. Reconectando...', shouldReconnect);
+      if (shouldReconnect) {
+        iniciarBot();
       }
-    );
-  } catch (error) {
-    console.error(
-      "Error al enviar mensaje a WhatsApp:",
-      error.response?.data || error.message
-    );
-  }
+    } else if (connection === 'open') {
+      console.log('✅ Bot de WhatsApp conectado exitosamente.');
+    }
+  });
+
+  sock.ev.on('messages.upsert', async (m) => {
+    if (m.type === 'notify') {
+      for (const msg of m.messages) {
+        await procesarMensaje(sock, msg);
+      }
+    }
+  });
 }
 
-app.listen(PORT, () => {
-  console.log(`Servidor activo en el puerto ${PORT}`);
-});
+iniciarBot();
