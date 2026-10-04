@@ -67,18 +67,19 @@ async function procesarMensaje(sock, msg) {
       return;
     }
 
-    // 2. PROCESAR TEXTO (Asistente de Ventas)
+   // 2. PROCESAR TEXTO (Asistente de Ventas)
     if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
       const textoUsuario = msg.message.conversation || msg.message.extendedTextMessage?.text;
       if (!textoUsuario) return;
 
       console.log(`[VENTAS] Mensaje de ${from}: ${textoUsuario}`);
 
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-      const chat = model.startChat({
-        systemInstruction: PROMPT_VENTAS
+      const model = genAI.getGenerativeModel({ 
+        model: 'gemini-1.5-flash',
+        systemInstruction: PROMPT_VENTAS // Pasarlo directamente aquí al inicializar el modelo
       });
 
+      const chat = model.startChat();
       const result = await chat.sendMessage(textoUsuario);
       const respuestaVentas = result.response.text();
 
