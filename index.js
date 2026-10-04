@@ -114,6 +114,26 @@ async function procesarMensaje(numero, textoCliente, imagenBuffer = null) {
 }
 
 // Ruta Webhook para probar o recibir mensajes
+// Ruta GET para la verificación de Meta WhatsApp
+app.get('/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  // Token de verificación
+  const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "mi_token_secreto_123";
+
+  if (mode && token) {
+    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+      console.log("WEBHOOK_VERIFIED");
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
+  } else {
+    res.sendStatus(400);
+  }
+});
 app.post('/webhook', async (req, res) => {
   const { numero, texto, imagenBase64 } = req.body;
   const buffer = imagenBase64 ? Buffer.from(imagenBase64, 'base64') : null;
