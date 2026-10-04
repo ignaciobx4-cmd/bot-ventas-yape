@@ -52,7 +52,7 @@ async function procesarMensaje(sock, msg) {
       const base64Image = buffer.toString('base64');
 
       const model = genAI.getGenerativeModel({ 
-        model: 'gemini-1.5-flash' 
+        model: 'gemini-3.8-flash' 
       });
 
       const result = await model.generateContent([
@@ -78,7 +78,7 @@ async function procesarMensaje(sock, msg) {
       console.log(`[VENTAS] Mensaje de ${from}: ${textoUsuario}`);
 
       const model = genAI.getGenerativeModel({ 
-        model: 'gemini-1.5-flash',
+        model: 'gemini-3.8-flash',
         systemInstruction: PROMPT_VENTAS
       });
 
