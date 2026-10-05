@@ -61,7 +61,7 @@ async function procesarMensaje(sock, msg) {
       const buffer = await sock.downloadMediaMessage(msg);
       const base64Image = buffer.toString('base64');
 
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
       const result = await model.generateContent([
         PROMPT_YAPE,
@@ -86,7 +86,7 @@ async function procesarMensaje(sock, msg) {
       console.log(`[VENTAS] Mensaje de ${from}: ${textoUsuario}`);
 
       const model = genAI.getGenerativeModel({ 
-        model: 'gemini-1.5-flash',
+        model: 'gemini-2.5-flash',
         systemInstruction: PROMPT_VENTAS
       });
 
@@ -113,14 +113,14 @@ async function iniciarBot() {
   const sock = makeWASocket({
     auth: state,
     printQRInTerminal: false,
-    syncFullHistory: false, // Evita descargar chats viejos para evitar errores de buffer
+    syncFullHistory: false, // Evita cargar chats viejos y previene errores de buffer
     markOnlineOnConnect: false,
-    browser: ["Ubuntu", "Chrome", "20.0.04"] // Emula un navegador estándar estable
+    browser: ["Ubuntu", "Chrome", "20.0.04"]
   });
 
   sock.ev.on('creds.update', saveCreds);
 
-  // Generar código de vinculación si la sesión aún no está conectada
+  // Solicitud de código de vinculación si la sesión aún no existe
   if (!sock.authState.creds.registered) {
     let numeroTelefono = (process.env.BOT_PHONE_NUMBER || "51963737843").replace(/[^0-9]/g, ''); 
     
