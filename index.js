@@ -23,8 +23,9 @@ Eres un asesor de ventas directo, conciso y muy persuasivo para nuestra agencia 
 TUS REGLAS DE ORO:
 1. BREVEDAD EXTREMA: Responde SIEMPRE en un máximo de 2 a 3 oraciones cortas. No envíes párrafos largos ni listas pesadas.
 2. PRODUCTO ÚNICO: Solo vendemos LANDING PAGES (Páginas de aterrizaje). No hacemos e-commerce complejo, pasarelas de pago online ni sistemas de reserva.
-3. ENFOQUE Y BENEFICIO: Explicamos que la Landing Page le da a su negocio una imagen 100% profesional para captar más clientes y ventas.
-4. MODO DE CONTACTO: Todas las Landing Pages incluyen un botón directo que lleva al cliente desde la web hasta el WhatsApp del negocio con un mensaje automático para cerrar la compra o cotización.
+3. PRECIO FIJO: El precio de la Landing Page es SIEMPRE de 350 soles (S/ 350) pago único. Si preguntan costo o precio, diles este valor exacto sin rodeos.
+4. ENFOQUE Y BENEFICIO: Explicamos que la Landing Page le da a su negocio una imagen 100% profesional para captar más clientes y ventas.
+5. MODO DE CONTACTO: Todas las Landing Pages incluyen un botón directo que lleva al cliente desde la web hasta el WhatsApp del negocio con un mensaje automático para cerrar la compra o cotización.
 
 ESTILO:
 Amical, directo, vendedor y súper fácil de leer en el celular.
@@ -48,9 +49,6 @@ async function procesarMensaje(sock, msg) {
     // Ignorar chats de grupos, mensajes enviados por el propio bot o notificaciones
     if (!from || from.endsWith('@g.us') || msg.key.fromMe) return;
 
-    // FILTRO OPCIONAL: Si deseas ignorar contactos guardados de tu agenda personal, descomenta la siguiente línea:
-    // if (sock.store?.contacts[from]?.name) return;
-
     const messageType = Object.keys(msg.message)[0];
 
     // 1. PROCESAR IMÁGENES (Comprobante de Yape)
@@ -61,17 +59,21 @@ async function procesarMensaje(sock, msg) {
       const buffer = await sock.downloadMediaMessage(msg);
       const base64Image = buffer.toString('base64');
 
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
-      const result = await model.generateContent([
-        PROMPT_YAPE,
-        {
-          inlineData: {
-            data: base64Image,
-            mimeType: 'image/jpeg'
-          }
-        }
-      ]);
+      let result;
+      try {
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        result = await model.generateContent([
+          PROMPT_YAPE,
+          { inlineData: { data: base64Image, mimeType: 'image/jpeg' } }
+        ]);
+      } catch (e) {
+        console.warn('[YAPE] Reintentando con modelo alternativo por alta demanda...');
+        const fallbackModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
+        result = await fallbackModel.generateContent([
+          PROMPT_YAPE,
+          { inlineData: { data: base64Image, mimeType: 'image/jpeg' } }
+        ]);
+      }
 
       const respuestaYape = result.response.text();
       await sock.sendMessage(from, { text: respuestaYape });
@@ -85,19 +87,30 @@ async function procesarMensaje(sock, msg) {
 
       console.log(`[VENTAS] Mensaje de ${from}: ${textoUsuario}`);
 
-      const model = genAI.getGenerativeModel({ 
-        model: 'gemini-2.5-flash',
-        systemInstruction: PROMPT_VENTAS
-      });
-
-      const chat = model.startChat();
-      const result = await chat.sendMessage(textoUsuario);
-      const respuestaVentas = result.response.text();
+      let respuestaVentas;
+      try {
+        const model = genAI.getGenerativeModel({ 
+          model: 'gemini-2.5-flash',
+          systemInstruction: PROMPT_VENTAS
+        });
+        const chat = model.startChat();
+        const result = await chat.sendMessage(textoUsuario);
+        respuestaVentas = result.response.text();
+      } catch (e) {
+        console.warn('[VENTAS] Reintentando generación con modelo secundario por alta demanda...');
+        const fallbackModel = genAI.getGenerativeModel({ 
+          model: 'gemini-1.5-flash-latest',
+          systemInstruction: PROMPT_VENTAS
+        });
+        const chatFallback = fallbackModel.startChat();
+        const resultFallback = await chatFallback.sendMessage(textoUsuario);
+        respuestaVentas = resultFallback.response.text();
+      }
 
       await sock.sendMessage(from, { text: respuestaVentas });
     }
   } catch (error) {
-    console.error('Error al procesar el mensaje:', error);
+    console.error('Error general al procesar mensaje:', error);
     const from = msg.key?.remoteJid;
     if (from) {
       await sock.sendMessage(from, { 
@@ -113,7 +126,7 @@ async function iniciarBot() {
   const sock = makeWASocket({
     auth: state,
     printQRInTerminal: false,
-    syncFullHistory: false, // Evita cargar chats viejos y previene errores de buffer
+    syncFullHistory: false, // Evita descargar chats viejos para prevenir errores de buffer
     markOnlineOnConnect: false,
     browser: ["Ubuntu", "Chrome", "20.0.04"]
   });
