@@ -1,4 +1,4 @@
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, downloadContentFromMessage } from '@whiskeysockets/baileys';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import express from 'express';
 
@@ -75,32 +75,57 @@ Si no es legible o no corresponde, indica amablemente que no se pudo validar la 
 `;
 
 /**
+ * Función para descargar imágenes de Baileys de forma segura a Buffer
+ */
+async function descargarImagenBuffer(msg) {
+  try {
+    const imageMessage = msg.message?.imageMessage;
+    if (!imageMessage) return null;
+
+    const stream = await downloadContentFromMessage(imageMessage, 'image');
+    let buffer = Buffer.from([]);
+    for await (const chunk of stream) {
+      buffer = Buffer.concat([buffer, chunk]);
+    }
+    return buffer.length > 0 ? buffer : null;
+  } catch (error) {
+    console.error('Error al descargar el buffer de la imagen:', error);
+    return null;
+  }
+}
+
+/**
  * Función para llamar a los modelos gratuitos de OpenRouter con fallback automático
  */
 async function consultarOpenRouterGratuito(mensajeUsuario) {
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://landing-pages.web.app',
-      'X-Title': 'Bot WhatsApp Ventas'
-    },
-    body: JSON.stringify({
-      models: MODELOS_GRATUITOS, // OpenRouter intenta este orden automáticamente
-      messages: [
-        { role: 'system', content: PROMPT_VENTAS },
-        { role: 'user', content: mensajeUsuario }
-      ]
-    })
-  });
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://landing-pages.web.app',
+        'X-Title': 'Bot WhatsApp Ventas'
+      },
+      body: JSON.stringify({
+        models: MODELOS_GRATUITOS,
+        messages: [
+          { role: 'system', content: PROMPT_VENTAS },
+          { role: 'user', content: mensajeUsuario }
+        ]
+      })
+    });
 
-  if (!response.ok) {
-    throw new Error(`OpenRouter HTTP Error: ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`OpenRouter HTTP Error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.choices[0]?.message?.content;
+  } catch (err) {
+    console.error('Error consultando OpenRouter:', err);
+    return null;
   }
-
-  const data = await response.json();
-  return data.choices[0]?.message?.content;
 }
 
 /**
@@ -135,11 +160,13 @@ async function notificarPedidoAAdmin(sock, datos) {
 
 async function procesarMensaje(sock, msg) {
   try {
+    if (!msg.message) return;
+
     const from = msg.key.remoteJid;
     if (!from || from.endsWith('@g.us') || msg.key.fromMe) return;
 
     const numeroRemitente = from.replace(/[^0-9]/g, '');
-    const timestampMensaje = msg.messageTimestamp * 1000;
+    const timestampMensaje = (msg.messageTimestamp || Date.now() / 1000) * 1000;
     const diezDiasEnMs = 10 * 24 * 60 * 60 * 1000;
     const ahora = Date.now();
 
@@ -149,7 +176,7 @@ async function procesarMensaje(sock, msg) {
 
     const tieneContextoWeb = PALABRAS_CLAVE_WEB.some(palabra => textoMinuscula.includes(palabra));
 
-    // Filtro contextual para no responder a familiares/amigos
+    // Filtro contextual
     if (!chatsActivosBot.has(from)) {
       if (ahora - timestampMensaje > diezDiasEnMs && !tieneContextoWeb) {
         console.log(`[IGNORADO] Chat antiguo (>10 días) sin contexto web: ${numeroRemitente}`);
@@ -158,14 +185,18 @@ async function procesarMensaje(sock, msg) {
       chatsActivosBot.add(from);
     }
 
-    // 1. PROCESAR IMÁGENES (Único uso de Gemini)
+    // 1. PROCESAR IMÁGENES (Uso de Gemini)
     if (messageType === 'imageMessage') {
       console.log(`[YAPE - GEMINI] Procesando imagen de ${from}`);
       await sock.sendMessage(from, { text: '🔍 Verificando comprobante de pago...' });
 
-      const buffer = await sock.downloadMediaMessage(msg);
-      const base64Image = buffer.toString('base64');
+      const buffer = await descargarImagenBuffer(msg);
+      if (!buffer) {
+        await sock.sendMessage(from, { text: '⚠️ No se pudo procesar la imagen enviada. Por favor, vuelve a enviarla.' });
+        return;
+      }
 
+      const base64Image = buffer.toString('base64');
       const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
       const result = await model.generateContent([
         PROMPT_YAPE,
@@ -186,7 +217,7 @@ async function procesarMensaje(sock, msg) {
       return;
     }
 
-    // 2. PROCESAR TEXTO (Uso exclusivo de OpenRouter Gratis)
+    // 2. PROCESAR TEXTO (OpenRouter Gratis)
     if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
       if (!textoUsuario) return;
 
@@ -208,7 +239,7 @@ async function procesarMensaje(sock, msg) {
       }
     }
   } catch (error) {
-    console.error('Error procesando mensaje:', error);
+    console.error('Error capturado en procesarMensaje:', error);
   }
 }
 
