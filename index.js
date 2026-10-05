@@ -37,7 +37,7 @@ Si el cliente pide ver ejemplos, modelos o tu portafolio de trabajos anteriores,
 - 🛍️ Click & Go Perú (Skincare / Catálogo): https://clickandgo-pe.netlify.app
 - 🔧 Soluciones Rápidas (Servicio Técnico): https://soluciones-linea-blanca.web.app
 - 💆 Joyas Spa (Spa / Masajes): https://joyas-spa.web.app
-Aclara que cada diseño se hace 100% a la medida desde cero según su negocio.
+Aclara que cada diseño se hace 100% a la medida desde cero según el negocio del cliente.
 
 REGLAS DE CONVERSACIÓN Y CIERRE:
 1. BREVEDAD EXTREMA: Responde en máximo 2 a 3 oraciones cortas y amicales.
@@ -63,7 +63,7 @@ Si no es legible o no corresponde, indica amablemente que no se pudo validar la 
 `;
 
 /**
- * Envia una notificación en UN SOLO MENSAJE ordenado a tu WhatsApp personal
+ * Envía una notificación en UN SOLO MENSAJE ordenado a tu WhatsApp personal
  */
 async function notificarPedidoAAdmin(sock, datos) {
   const mensajeFicha = `
@@ -116,7 +116,7 @@ async function procesarMensaje(sock, msg) {
         ]);
       } catch (e) {
         console.warn('[YAPE] Reintentando con modelo secundario por alta demanda...');
-        const fallbackModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const fallbackModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
         result = await fallbackModel.generateContent([
           PROMPT_YAPE,
           { inlineData: { data: base64Image, mimeType: 'image/jpeg' } }
@@ -156,7 +156,7 @@ async function procesarMensaje(sock, msg) {
       } catch (e) {
         console.warn('[VENTAS] Reintentando generación con modelo secundario...');
         const fallbackModel = genAI.getGenerativeModel({ 
-          model: 'gemini-1.5-flash',
+          model: 'gemini-2.0-flash',
           systemInstruction: PROMPT_VENTAS
         });
         const chatFallback = fallbackModel.startChat();
