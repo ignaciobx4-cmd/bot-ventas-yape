@@ -14,8 +14,14 @@ app.listen(port, () => {
   console.log(`Servidor activo en el puerto ${port}`);
 });
 
-// 2. Tu número de WhatsApp personal donde recibirás la notificación de los pedidos
+// 2. Configuración de Números
 const MI_NUMERO_NOTIFICACION = '51963737843@s.whatsapp.net';
+
+// Palabras clave para detectar intención comercial si el chat es dudoso
+const PALABRAS_CLAVE_WEB = ['web', 'landing', 'pagina', 'página', 'precio', 'cotizacion', 'cotización', 'portafolio', 'ejemplo', 'diseño', 'desarrollo', 'yape', 'cuanto', 'cuánto'];
+
+// Memoria local de chats gestionados
+const chatsActivosBot = new Set();
 
 // 3. Inicializar Google Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -63,7 +69,7 @@ Si no es legible o no corresponde, indica amablemente que no se pudo validar la 
 `;
 
 /**
- * Envía una notificación en UN SOLO MENSAJE ordenado a tu WhatsApp personal
+ * Envía una notificación en UN SOLO MENSAJE a tu WhatsApp personal
  */
 async function notificarPedidoAAdmin(sock, datos) {
   const mensajeFicha = `
@@ -86,7 +92,7 @@ async function notificarPedidoAAdmin(sock, datos) {
 
   try {
     await sock.sendMessage(MI_NUMERO_NOTIFICACION, { text: mensajeFicha });
-    console.log('✅ Notificación de pedido enviada a tu WhatsApp personal.');
+    console.log('✅ Notificación enviada a tu WhatsApp personal.');
   } catch (error) {
     console.error('Error al enviar la notificación al admin:', error);
   }
@@ -95,13 +101,34 @@ async function notificarPedidoAAdmin(sock, datos) {
 async function procesarMensaje(sock, msg) {
   try {
     const from = msg.key.remoteJid;
+    
+    // Ignorar grupos o mensajes emitidos por el propio bot
     if (!from || from.endsWith('@g.us') || msg.key.fromMe) return;
 
-    const messageType = Object.keys(msg.message)[0];
+    const numeroRemitente = from.replace(/[^0-9]/g, '');
+    const timestampMensaje = msg.messageTimestamp * 1000;
+    const diezDiasEnMs = 10 * 24 * 60 * 60 * 1000;
+    const ahora = Date.now();
 
-    // 1. PROCESAR IMÁGENES (Comprobante de Yape)
+    const messageType = Object.keys(msg.message)[0];
+    const textoUsuario = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+    const textoMinuscula = textoUsuario.toLowerCase();
+
+    const tieneContextoWeb = PALABRAS_CLAVE_WEB.some(palabra => textoMinuscula.includes(palabra));
+
+    // Filtro contextual
+    if (!chatsActivosBot.has(from)) {
+      if (ahora - timestampMensaje > diezDiasEnMs && !tieneContextoWeb) {
+        console.log(`[IGNORADO] Chat antiguo (>10 días) sin contexto web: ${numeroRemitente}`);
+        return;
+      }
+
+      chatsActivosBot.add(from);
+    }
+
+    // 1. PROCESAR IMÁGENES (Comprobante Yape)
     if (messageType === 'imageMessage') {
-      console.log(`[YAPE] Procesando imagen enviada por ${from}`);
+      console.log(`[YAPE] Procesando imagen de ${from}`);
       await sock.sendMessage(from, { text: '🔍 Verificando comprobante de pago...' });
 
       const buffer = await sock.downloadMediaMessage(msg);
@@ -109,14 +136,14 @@ async function procesarMensaje(sock, msg) {
 
       let result;
       try {
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
         result = await model.generateContent([
           PROMPT_YAPE,
           { inlineData: { data: base64Image, mimeType: 'image/jpeg' } }
         ]);
       } catch (e) {
-        console.warn('[YAPE] Reintentando con modelo secundario por alta demanda...');
-        const fallbackModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        console.warn('[YAPE] Reintentando con modelo de respaldo...');
+        const fallbackModel = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
         result = await fallbackModel.generateContent([
           PROMPT_YAPE,
           { inlineData: { data: base64Image, mimeType: 'image/jpeg' } }
@@ -129,17 +156,16 @@ async function procesarMensaje(sock, msg) {
       if (respuestaYape.toLowerCase().includes('sí') || respuestaYape.toLowerCase().includes('éxito')) {
         await notificarPedidoAAdmin(sock, {
           nombreCliente: msg.pushName || 'Cliente WhatsApp',
-          telefono: from.replace(/[^0-9]/g, ''),
+          telefono: numeroRemitente,
           monto: '175 / 350',
-          detalleCliente: 'Comprobante de Yape subido y verificado.'
+          detalleCliente: 'Comprobante de Yape verificado.'
         });
       }
       return;
     }
 
-    // 2. PROCESAR TEXTO (Ventas y Recopilación)
+    // 2. PROCESAR TEXTO (Ventas)
     if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
-      const textoUsuario = msg.message.conversation || msg.message.extendedTextMessage?.text;
       if (!textoUsuario) return;
 
       console.log(`[VENTAS] Mensaje de ${from}: ${textoUsuario}`);
@@ -147,7 +173,7 @@ async function procesarMensaje(sock, msg) {
       let respuestaVentas;
       try {
         const model = genAI.getGenerativeModel({ 
-          model: 'gemini-2.5-flash',
+          model: 'gemini-1.5-flash',
           systemInstruction: PROMPT_VENTAS
         });
         const chat = model.startChat();
@@ -156,7 +182,7 @@ async function procesarMensaje(sock, msg) {
       } catch (e) {
         console.warn('[VENTAS] Reintentando generación con modelo secundario...');
         const fallbackModel = genAI.getGenerativeModel({ 
-          model: 'gemini-2.0-flash',
+          model: 'gemini-1.5-pro',
           systemInstruction: PROMPT_VENTAS
         });
         const chatFallback = fallbackModel.startChat();
@@ -166,23 +192,17 @@ async function procesarMensaje(sock, msg) {
 
       await sock.sendMessage(from, { text: respuestaVentas });
 
-      if (textoUsuario.length > 30 && (textoUsuario.toLowerCase().includes('negocio') || textoUsuario.toLowerCase().includes('https://') || textoUsuario.toLowerCase().includes('instagram'))) {
+      if (textoUsuario.length > 25 && (textoUsuario.toLowerCase().includes('negocio') || textoUsuario.toLowerCase().includes('https://') || textoUsuario.toLowerCase().includes('instagram'))) {
         await notificarPedidoAAdmin(sock, {
           nombreCliente: msg.pushName || 'Cliente WhatsApp',
-          telefono: from.replace(/[^0-9]/g, ''),
+          telefono: numeroRemitente,
           monto: 'Por confirmar',
           detalleCliente: textoUsuario
         });
       }
     }
   } catch (error) {
-    console.error('Error general al procesar mensaje:', error);
-    const from = msg.key?.remoteJid;
-    if (from) {
-      await sock.sendMessage(from, { 
-        text: '¡Hola! En este momento estamos atendiendo varias consultas. Por favor déjanos tu duda sobre nuestras Landing Pages y te responderemos en breve.' 
-      });
-    }
+    console.error('Error procesando mensaje:', error);
   }
 }
 
