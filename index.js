@@ -2,7 +2,7 @@ import makeWASocket, { useMultiFileAuthState, DisconnectReason, downloadContentF
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import express from 'express';
 
-// 1. Servidor Express para mantener activo el proceso en Render
+// 1. Servidor Express para mantener vivo el servicio en Render
 const app = express();
 const port = process.env.PORT || 10000;
 
@@ -23,11 +23,11 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const PALABRAS_CLAVE_WEB = ['web', 'landing', 'pagina', 'página', 'precio', 'cotizacion', 'cotización', 'portafolio', 'ejemplo', 'diseño', 'desarrollo', 'yape', 'cuanto', 'cuánto'];
 const chatsActivosBot = new Set();
 
-// LISTA DE MODELOS 100% GRATUITOS Y ACTIVOS EN OPENROUTER (Máximo 3)
+// LISTA DE MODELOS GRATUITOS Y ESTABLES EN OPENROUTER
 const MODELOS_GRATUITOS = [
   'google/gemini-2.0-flash-lite-001:free',
-  'deepseek/deepseek-r1:free',
-  'qwen/qwen-2.5-72b-instruct:free'
+  'qwen/qwen-2.5-72b-instruct:free',
+  'mistralai/mistral-7b-instruct:free'
 ];
 
 const PROMPT_VENTAS = `
@@ -73,7 +73,7 @@ Si no es legible o no corresponde, indica amablemente que no se pudo validar la 
 `;
 
 /**
- * Descarga una imagen enviada por WhatsApp en un Buffer seguro
+ * Función para descargar imágenes de Baileys a un Buffer seguro
  */
 async function descargarImagenBuffer(msg) {
   try {
@@ -93,39 +93,48 @@ async function descargarImagenBuffer(msg) {
 }
 
 /**
- * Consulta modelos gratuitos de OpenRouter con logs detallados
+ * Consulta modelos gratuitos de OpenRouter uno a uno (Fallback manual)
  */
 async function consultarOpenRouterGratuito(mensajeUsuario) {
-  try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://landing-pages.web.app',
-        'X-Title': 'Bot WhatsApp Ventas'
-      },
-      body: JSON.stringify({
-        models: MODELOS_GRATUITOS,
-        messages: [
-          { role: 'system', content: PROMPT_VENTAS },
-          { role: 'user', content: mensajeUsuario }
-        ]
-      })
-    });
+  for (const modelo of MODELOS_GRATUITOS) {
+    try {
+      console.log(`[OPENROUTER] Intentando consulta con modelo: ${modelo}`);
 
-    if (!response.ok) {
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://landing-pages.web.app',
+          'X-Title': 'Bot WhatsApp Ventas'
+        },
+        body: JSON.stringify({
+          model: modelo,
+          messages: [
+            { role: 'system', content: PROMPT_VENTAS },
+            { role: 'user', content: mensajeUsuario }
+          ]
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const respuesta = data.choices[0]?.message?.content;
+        if (respuesta) {
+          console.log(`[OPENROUTER] Respuesta exitosa de: ${modelo}`);
+          return respuesta;
+        }
+      }
+
       const errorDetalle = await response.text();
-      console.error('Detalle del error devuelto por OpenRouter:', errorDetalle);
-      throw new Error(`OpenRouter HTTP Error: ${response.status}`);
+      console.warn(`[OPENROUTER] Modelo ${modelo} falló. Detalle:`, errorDetalle);
+    } catch (err) {
+      console.error(`[OPENROUTER] Error conectando con ${modelo}:`, err);
     }
-
-    const data = await response.json();
-    return data.choices[0]?.message?.content;
-  } catch (err) {
-    console.error('Error consultando OpenRouter:', err);
-    return null;
   }
+
+  console.error('[OPENROUTER] Todos los modelos gratuitos de la lista fallaron.');
+  return null;
 }
 
 /**
@@ -176,7 +185,7 @@ async function procesarMensaje(sock, msg) {
 
     const tieneContextoWeb = PALABRAS_CLAVE_WEB.some(palabra => textoMinuscula.includes(palabra));
 
-    // Filtro para ignorar chats antiguos sin contexto comercial
+    // Filtro contextual
     if (!chatsActivosBot.has(from)) {
       if (ahora - timestampMensaje > diezDiasEnMs && !tieneContextoWeb) {
         console.log(`[IGNORADO] Chat antiguo (>10 días) sin contexto web: ${numeroRemitente}`);
@@ -185,7 +194,7 @@ async function procesarMensaje(sock, msg) {
       chatsActivosBot.add(from);
     }
 
-    // 1. PROCESAR IMÁGENES (Único uso de Gemini)
+    // 1. PROCESAR IMÁGENES (Uso exclusivo de Gemini 1.5 Flash)
     if (messageType === 'imageMessage') {
       console.log(`[YAPE - GEMINI] Procesando imagen de ${from}`);
       await sock.sendMessage(from, { text: '🔍 Verificando comprobante de pago...' });
@@ -217,7 +226,7 @@ async function procesarMensaje(sock, msg) {
       return;
     }
 
-    // 2. PROCESAR TEXTO (OpenRouter Gratuito)
+    // 2. PROCESAR TEXTO (OpenRouter Gratis con Rotación)
     if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
       if (!textoUsuario) return;
 
