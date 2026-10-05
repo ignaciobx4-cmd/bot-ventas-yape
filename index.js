@@ -118,7 +118,6 @@ async function procesarMensaje(sock, msg) {
       const respuestaYape = result.response.text();
       await sock.sendMessage(from, { text: respuestaYape });
 
-      // Si la respuesta detecta un Yape verificado, notifica a tu número
       if (respuestaYape.toLowerCase().includes('sí') || respuestaYape.toLowerCase().includes('éxito')) {
         await notificarPedidoAAdmin(sock, {
           nombreCliente: msg.pushName || 'Cliente WhatsApp',
@@ -159,7 +158,6 @@ async function procesarMensaje(sock, msg) {
 
       await sock.sendMessage(from, { text: respuestaVentas });
 
-      // Si el cliente envía datos detallados de su marca o negocio, te los reenvía
       if (textoUsuario.length > 30 && (textoUsuario.toLowerCase().includes('negocio') || textoUsuario.toLowerCase().includes('https://') || textoUsuario.toLowerCase().includes('instagram'))) {
         await notificarPedidoAAdmin(sock, {
           nombreCliente: msg.pushName || 'Cliente WhatsApp',
@@ -193,26 +191,29 @@ async function iniciarBot() {
 
   sock.ev.on('creds.update', saveCreds);
 
-  let pairingCodeRequested = false;
+  let codigoSolicitado = false;
 
   sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect } = update;
+    const { connection, lastDisconnect, qr } = update;
 
-    if (!sock.authState.creds.registered && !pairingCodeRequested && connection === 'open') {
-      pairingCodeRequested = true;
+    // Detectar cuando Baileys está listo para solicitar el código (evento qr o inicio de conexión sin registro)
+    if (!sock.authState.creds.registered && !codigoSolicitado && (qr || connection === 'connecting')) {
+      codigoSolicitado = true;
       let numeroTelefono = (process.env.BOT_PHONE_NUMBER || "51963737843").replace(/[^0-9]/g, '');
 
-      console.log(`[AUTH] Solicitando código de vinculación para: ${numeroTelefono}...`);
+      console.log(`\n[AUTH] Generando código de vinculación para: ${numeroTelefono}...`);
 
-      try {
-        const code = await sock.requestPairingCode(numeroTelefono);
-        console.log(`\n==================================================`);
-        console.log(`CÓDIGO DE VINCULACIÓN EN WHATSAPP: ${code}`);
-        console.log(`==================================================\n`);
-      } catch (err) {
-        console.error("Error al generar el código de vinculación:", err);
-        pairingCodeRequested = false;
-      }
+      setTimeout(async () => {
+        try {
+          const code = await sock.requestPairingCode(numeroTelefono);
+          console.log(`\n==================================================`);
+          console.log(`CÓDIGO DE VINCULACIÓN EN WHATSAPP: ${code}`);
+          console.log(`==================================================\n`);
+        } catch (err) {
+          console.error("Error al generar el código de vinculación:", err);
+          codigoSolicitado = false;
+        }
+      }, 4000);
     }
 
     if (connection === 'close') {
