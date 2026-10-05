@@ -2,7 +2,7 @@ import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeys
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import express from 'express';
 
-// 1. Servidor Express para mantener vivo el proceso en Render
+// 1. Servidor Express para Render
 const app = express();
 const port = process.env.PORT || 10000;
 
@@ -14,17 +14,23 @@ app.listen(port, () => {
   console.log(`Servidor activo en el puerto ${port}`);
 });
 
-// 2. Configuración de Números
+// 2. Configuración de Variables
 const MI_NUMERO_NOTIFICACION = '51963737843@s.whatsapp.net';
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Palabras clave para detectar intención comercial si el chat es dudoso
+// Palabras clave para detectar intención comercial
 const PALABRAS_CLAVE_WEB = ['web', 'landing', 'pagina', 'página', 'precio', 'cotizacion', 'cotización', 'portafolio', 'ejemplo', 'diseño', 'desarrollo', 'yape', 'cuanto', 'cuánto'];
-
-// Memoria local de chats gestionados
 const chatsActivosBot = new Set();
 
-// 3. Inicializar Google Gemini API
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// LISTA DE MODELOS GRATUITOS EN OPENROUTER (se prueban en orden de prioridad)
+const MODELOS_GRATUITOS = [
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'google/gemini-2.0-flash-lite-001:free',
+  'deepseek/deepseek-r1:free',
+  'qwen/qwen-2.5-72b-instruct:free',
+  'mistralai/mistral-7b-instruct:free'
+];
 
 const PROMPT_VENTAS = `
 Eres un asesor de ventas directo, conciso y muy persuasivo para nuestra agencia de desarrollo web.
@@ -69,7 +75,36 @@ Si no es legible o no corresponde, indica amablemente que no se pudo validar la 
 `;
 
 /**
- * Envía una notificación en UN SOLO MENSAJE a tu WhatsApp personal
+ * Función para llamar a los modelos gratuitos de OpenRouter con fallback automático
+ */
+async function consultarOpenRouterGratuito(mensajeUsuario) {
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://landing-pages.web.app',
+      'X-Title': 'Bot WhatsApp Ventas'
+    },
+    body: JSON.stringify({
+      models: MODELOS_GRATUITOS, // OpenRouter intenta este orden automáticamente
+      messages: [
+        { role: 'system', content: PROMPT_VENTAS },
+        { role: 'user', content: mensajeUsuario }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenRouter HTTP Error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data.choices[0]?.message?.content;
+}
+
+/**
+ * Envía la ficha de notificación a tu WhatsApp personal
  */
 async function notificarPedidoAAdmin(sock, datos) {
   const mensajeFicha = `
@@ -101,8 +136,6 @@ async function notificarPedidoAAdmin(sock, datos) {
 async function procesarMensaje(sock, msg) {
   try {
     const from = msg.key.remoteJid;
-    
-    // Ignorar grupos o mensajes emitidos por el propio bot
     if (!from || from.endsWith('@g.us') || msg.key.fromMe) return;
 
     const numeroRemitente = from.replace(/[^0-9]/g, '');
@@ -116,39 +149,28 @@ async function procesarMensaje(sock, msg) {
 
     const tieneContextoWeb = PALABRAS_CLAVE_WEB.some(palabra => textoMinuscula.includes(palabra));
 
-    // Filtro contextual
+    // Filtro contextual para no responder a familiares/amigos
     if (!chatsActivosBot.has(from)) {
       if (ahora - timestampMensaje > diezDiasEnMs && !tieneContextoWeb) {
         console.log(`[IGNORADO] Chat antiguo (>10 días) sin contexto web: ${numeroRemitente}`);
         return;
       }
-
       chatsActivosBot.add(from);
     }
 
-    // 1. PROCESAR IMÁGENES (Comprobante Yape)
+    // 1. PROCESAR IMÁGENES (Único uso de Gemini)
     if (messageType === 'imageMessage') {
-      console.log(`[YAPE] Procesando imagen de ${from}`);
+      console.log(`[YAPE - GEMINI] Procesando imagen de ${from}`);
       await sock.sendMessage(from, { text: '🔍 Verificando comprobante de pago...' });
 
       const buffer = await sock.downloadMediaMessage(msg);
       const base64Image = buffer.toString('base64');
 
-      let result;
-      try {
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-        result = await model.generateContent([
-          PROMPT_YAPE,
-          { inlineData: { data: base64Image, mimeType: 'image/jpeg' } }
-        ]);
-      } catch (e) {
-        console.warn('[YAPE] Reintentando con modelo de respaldo...');
-        const fallbackModel = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
-        result = await fallbackModel.generateContent([
-          PROMPT_YAPE,
-          { inlineData: { data: base64Image, mimeType: 'image/jpeg' } }
-        ]);
-      }
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const result = await model.generateContent([
+        PROMPT_YAPE,
+        { inlineData: { data: base64Image, mimeType: 'image/jpeg' } }
+      ]);
 
       const respuestaYape = result.response.text();
       await sock.sendMessage(from, { text: respuestaYape });
@@ -164,33 +186,17 @@ async function procesarMensaje(sock, msg) {
       return;
     }
 
-    // 2. PROCESAR TEXTO (Ventas)
+    // 2. PROCESAR TEXTO (Uso exclusivo de OpenRouter Gratis)
     if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
       if (!textoUsuario) return;
 
-      console.log(`[VENTAS] Mensaje de ${from}: ${textoUsuario}`);
+      console.log(`[VENTAS - OPENROUTER] Mensaje de ${from}: ${textoUsuario}`);
 
-      let respuestaVentas;
-      try {
-        const model = genAI.getGenerativeModel({ 
-          model: 'gemini-1.5-flash',
-          systemInstruction: PROMPT_VENTAS
-        });
-        const chat = model.startChat();
-        const result = await chat.sendMessage(textoUsuario);
-        respuestaVentas = result.response.text();
-      } catch (e) {
-        console.warn('[VENTAS] Reintentando generación con modelo secundario...');
-        const fallbackModel = genAI.getGenerativeModel({ 
-          model: 'gemini-1.5-pro',
-          systemInstruction: PROMPT_VENTAS
-        });
-        const chatFallback = fallbackModel.startChat();
-        const resultFallback = await chatFallback.sendMessage(textoUsuario);
-        respuestaVentas = resultFallback.response.text();
+      const respuestaVentas = await consultarOpenRouterGratuito(textoUsuario);
+
+      if (respuestaVentas) {
+        await sock.sendMessage(from, { text: respuestaVentas });
       }
-
-      await sock.sendMessage(from, { text: respuestaVentas });
 
       if (textoUsuario.length > 25 && (textoUsuario.toLowerCase().includes('negocio') || textoUsuario.toLowerCase().includes('https://') || textoUsuario.toLowerCase().includes('instagram'))) {
         await notificarPedidoAAdmin(sock, {
