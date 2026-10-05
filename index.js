@@ -2,17 +2,19 @@ import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeys
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import express from 'express';
 
+// Servidor Express para mantener vivo el Web Service en Render
 const app = express();
 const port = process.env.PORT || 10000;
 
 app.get('/', (req, res) => {
-  res.send('Bot de WhatsApp activo');
+  res.send('Bot de WhatsApp de Agencia Web Activo');
 });
 
 app.listen(port, () => {
   console.log(`Servidor activo en el puerto ${port}`);
 });
 
+// Inicializar Google Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const PROMPT_VENTAS = `
@@ -29,7 +31,7 @@ Amical, directo, vendedor y súper fácil de leer en el celular.
 `;
 
 const PROMPT_YAPE = `
-Analiza la imagen y determina si es un comprobante de pago válido de Yape.
+Analiza la siguiente imagen y determina si es un comprobante de pago válido de Yape.
 Extrae obligatoriamente la siguiente información en formato texto simple:
 1. ¿Es un comprobante de Yape válido? (Sí / No)
 2. Monto yapeado (S/)
@@ -43,7 +45,11 @@ Si no es legible, indica amablemente que no se pudo validar la imagen.
 async function procesarMensaje(sock, msg) {
   try {
     const from = msg.key.remoteJid;
+    // Ignorar chats de grupos, mensajes enviados por ti mismo o notificaciones del sistema
     if (!from || from.endsWith('@g.us') || msg.key.fromMe) return;
+
+    // OPCIONAL: Descomenta la siguiente línea si deseas ignorar los contactos guardados en tu agenda personal:
+    // if (sock.store?.contacts[from]?.name) return;
 
     const messageType = Object.keys(msg.message)[0];
 
@@ -55,7 +61,6 @@ async function procesarMensaje(sock, msg) {
       const buffer = await sock.downloadMediaMessage(msg);
       const base64Image = buffer.toString('base64');
 
-      // USAR MODELO OFICIAL ESTABLE
       const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
       const result = await model.generateContent([
@@ -73,14 +78,13 @@ async function procesarMensaje(sock, msg) {
       return;
     }
 
-    // 2. PROCESAR TEXTO (Asistente de Ventas)
+    // 2. PROCESAR TEXTO (Asistente de Ventas de Landing Pages)
     if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
       const textoUsuario = msg.message.conversation || msg.message.extendedTextMessage?.text;
       if (!textoUsuario) return;
 
       console.log(`[VENTAS] Mensaje de ${from}: ${textoUsuario}`);
 
-      // MODELO OFICIAL ESTABLE CON SYSTEM INSTRUCTION
       const model = genAI.getGenerativeModel({ 
         model: 'gemini-1.5-flash',
         systemInstruction: PROMPT_VENTAS
@@ -94,11 +98,10 @@ async function procesarMensaje(sock, msg) {
     }
   } catch (error) {
     console.error('Error al procesar el mensaje:', error);
-    // Respuesta de respaldo si la API de Google sufre un microparpadeo
-    const from = msg.key.remoteJid;
+    const from = msg.key?.remoteJid;
     if (from) {
       await sock.sendMessage(from, { 
-        text: '¡Hola! En este momento estamos recibiendo muchas consultas. Por favor escríbeme tu duda sobre nuestras Landing Pages y te responderé en breve.' 
+        text: '¡Hola! En este momento estamos atendiendo varias consultas. Por favor déjanos tu duda sobre nuestras Landing Pages y te responderemos en breve.' 
       });
     }
   }
@@ -109,14 +112,15 @@ async function iniciarBot() {
 
   const sock = makeWASocket({
     auth: state,
-    printQRInTerminal: false
+    printQRInTerminal: false,
+    syncFullHistory: false, // Desactiva la sincronización pesada para evitar fallos de buffer
+    markOnlineOnConnect: false
   });
 
   sock.ev.on('creds.update', saveCreds);
 
-  // Solicitar código de emparejamiento si la sesión no está iniciada
+  // Solicitar Código de Emparejamiento por teléfono si la sesión aún no está vinculada
   if (!sock.authState.creds.registered) {
-    // Reemplaza con tu número de teléfono con código de país (ejemplo para Perú: 51963737843)
     const numeroTelefono = process.env.BOT_PHONE_NUMBER || "51963737843"; 
     
     setTimeout(async () => {
