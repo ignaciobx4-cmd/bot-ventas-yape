@@ -2,7 +2,7 @@ import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeys
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import express from 'express';
 
-// 1. Servidor Express para Render
+// 1. Servidor Express para mantener vivo el proceso en Render
 const app = express();
 const port = process.env.PORT || 10000;
 
@@ -14,26 +14,29 @@ app.listen(port, () => {
   console.log(`Servidor activo en el puerto ${port}`);
 });
 
-// 2. Inicializar Google Gemini API
+// 2. Tu número de WhatsApp personal donde recibirás los pedidos
+const MI_NUMERO_NOTIFICACION = '51963737843@s.whatsapp.net';
+
+// 3. Inicializar Google Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const PROMPT_VENTAS = `
 Eres un asesor de ventas directo, conciso y muy persuasivo para nuestra agencia de desarrollo web.
 
 DATOS DEL SERVICIO Y PAGO:
-- Producto: Solo vendemos LANDING PAGES (Páginas de aterrizaje profesionales con botón a WhatsApp).
+- Producto: Solo vendemos LANDING PAGES (Páginas de aterrizaje profesionales con botón directo a WhatsApp).
 - Precio: S/ 350 (pago único).
+- Modalidades de Pago: Aceptamos pago completo de S/ 350 o un adelanto del 50% (S/ 175) para iniciar y el saldo contra entrega.
 - Datos de Yape:
   • Número: 963737843
-  • Nombre: Kattia de la Cruz
+  • Titular: Kattia de la Cruz
 
-REGLAS DE RESPUESTA:
-1. BREVEDAD EXTREMA: Responde en máximo 2 a 3 oraciones cortas.
-2. INSTRUCCIÓN DE PAGO (CLAVE): Si el cliente dice que SÍ quiere comprar, está listo para empezar, o pregunta "¿cómo pago?", "dame el número", "cómo realizo el pago", DEJA de hacer preguntas de venta y dale directamente los datos de Yape:
-   "Puedes realizar el Yape de S/ 350 al 963737843 a nombre de Kattia de la Cruz. Envíame la captura o comprobante por aquí para verificarlo e iniciar tu proyecto de inmediato."
-3. NO REPETIR PREGUNTAS: Si el cliente ya confirmó que quiere comprar, no le preguntes de nuevo "¿Empezamos?" ni le pidas que escriba por WhatsApp (ya está en WhatsApp).
-
-ESTILO: Amical, directo y profesional.
+REGLAS DE CONVERSACIÓN Y CIERRE:
+1. BREVEDAD EXTREMA: Responde en máximo 2 a 3 oraciones cortas y amicales.
+2. CIERRE Y DATO DE PAGO: Si el cliente confirma que quiere comprar, dice que sí o pregunta cómo pagar, dale de inmediato las opciones de Yape:
+   "¡Genial! Puedes realizar el Yape del 50% (S/ 175) o el pago total (S/ 350) al 963737843 a nombre de Kattia de la Cruz. Por favor reenvíame el comprobante por aquí para verificarlo."
+3. RECOPILACIÓN POST-PAGO: Si el cliente ya pagó o pregunta qué datos necesitas, indícale:
+   "Para armar tu Landing Page, por favor envíame en un solo mensaje: 1. Nombre de tu negocio, 2. Una breve descripción o lista de tus productos/servicios, y 3. El enlace a tu red social principal (Instagram/Facebook)."
 `;
 
 const PROMPT_YAPE = `
@@ -45,9 +48,41 @@ Extrae obligatoriamente la siguiente información en formato texto simple:
 4. Nombre del emisor (si figura)
 5. Fecha y hora
 6. Nro. de operación
-Si el pago es válido por S/ 350 a Kattia de la Cruz, indícales que el pago fue verificado con éxito y que en breve iniciaremos la elaboración de su Landing Page.
+
+Si el pago es válido por S/ 175 o S/ 350 a Kattia de la Cruz:
+Indícale amablemente al cliente que el pago fue verificado con éxito y pídele que a continuación envíe el Nombre de su negocio, descripción de sus servicios y sus redes sociales para empezar el proyecto.
 Si no es legible o no corresponde, indica amablemente que no se pudo validar la imagen.
 `;
+
+/**
+ * Envia una notificación en UN SOLO MENSAJE ordenado a tu WhatsApp personal
+ */
+async function notificarPedidoAAdmin(sock, datos) {
+  const mensajeFicha = `
+🚨 *NUEVO PEDIDO REGISTRADO* 🚨
+==================================
+👤 *Cliente:* ${datos.nombreCliente}
+📱 *WhatsApp:* https://wa.me/${datos.telefono}
+
+💰 *DETALLES DEL PAGO:*
+• *Monto Registrado:* S/ ${datos.monto}
+• *Estado:* ${datos.monto >= 350 ? 'PAGO COMPLETO (S/ 350)' : 'ADELANTO 50% (S/ 175)'}
+
+🏢 *DATOS DEL NEGOCIO Y PROYECTO:*
+• *Mensaje del Cliente:*
+"${datos.detalleCliente}"
+
+==================================
+📌 *Acción requerida:* Contactar al cliente para solicitar logo/fotos si no los envió y proceder al maquetado.
+`;
+
+  try {
+    await sock.sendMessage(MI_NUMERO_NOTIFICACION, { text: mensajeFicha });
+    console.log('✅ Notificación de pedido enviada a tu WhatsApp personal.');
+  } catch (error) {
+    console.error('Error al enviar la notificación al admin:', error);
+  }
+}
 
 async function procesarMensaje(sock, msg) {
   try {
@@ -72,7 +107,7 @@ async function procesarMensaje(sock, msg) {
           { inlineData: { data: base64Image, mimeType: 'image/jpeg' } }
         ]);
       } catch (e) {
-        console.warn('[YAPE] Reintentando con modelo alternativo...');
+        console.warn('[YAPE] Reintentando con modelo secundario por alta demanda...');
         const fallbackModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
         result = await fallbackModel.generateContent([
           PROMPT_YAPE,
@@ -82,10 +117,20 @@ async function procesarMensaje(sock, msg) {
 
       const respuestaYape = result.response.text();
       await sock.sendMessage(from, { text: respuestaYape });
+
+      // Si la respuesta detecta un Yape verificado, notifica a tu número
+      if (respuestaYape.toLowerCase().includes('sí') || respuestaYape.toLowerCase().includes('éxito')) {
+        await notificarPedidoAAdmin(sock, {
+          nombreCliente: msg.pushName || 'Cliente WhatsApp',
+          telefono: from.replace(/[^0-9]/g, ''),
+          monto: '175 / 350',
+          detalleCliente: 'Comprobante de Yape subido y verificado.'
+        });
+      }
       return;
     }
 
-    // 2. PROCESAR TEXTO (Asistente de Ventas)
+    // 2. PROCESAR TEXTO (Ventas y Recopilación)
     if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
       const textoUsuario = msg.message.conversation || msg.message.extendedTextMessage?.text;
       if (!textoUsuario) return;
@@ -102,7 +147,7 @@ async function procesarMensaje(sock, msg) {
         const result = await chat.sendMessage(textoUsuario);
         respuestaVentas = result.response.text();
       } catch (e) {
-        console.warn('[VENTAS] Reintentando generación con modelo secundario por alta demanda...');
+        console.warn('[VENTAS] Reintentando generación con modelo secundario...');
         const fallbackModel = genAI.getGenerativeModel({ 
           model: 'gemini-1.5-flash-latest',
           systemInstruction: PROMPT_VENTAS
@@ -113,6 +158,16 @@ async function procesarMensaje(sock, msg) {
       }
 
       await sock.sendMessage(from, { text: respuestaVentas });
+
+      // Si el cliente envía datos detallados de su marca o negocio, te los reenvía
+      if (textoUsuario.length > 30 && (textoUsuario.toLowerCase().includes('negocio') || textoUsuario.toLowerCase().includes('https://') || textoUsuario.toLowerCase().includes('instagram'))) {
+        await notificarPedidoAAdmin(sock, {
+          nombreCliente: msg.pushName || 'Cliente WhatsApp',
+          telefono: from.replace(/[^0-9]/g, ''),
+          monto: 'Por confirmar',
+          detalleCliente: textoUsuario
+        });
+      }
     }
   } catch (error) {
     console.error('Error general al procesar mensaje:', error);
@@ -143,7 +198,6 @@ async function iniciarBot() {
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
 
-    // Generar código de vincular cuando la conexión esté 100% abierta y estable
     if (!sock.authState.creds.registered && !pairingCodeRequested && connection === 'open') {
       pairingCodeRequested = true;
       let numeroTelefono = (process.env.BOT_PHONE_NUMBER || "51963737843").replace(/[^0-9]/g, '');
