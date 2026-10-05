@@ -14,7 +14,7 @@ app.listen(port, () => {
   console.log(`Servidor activo en el puerto ${port}`);
 });
 
-// 2. Tu número de WhatsApp personal donde recibirás los pedidos
+// 2. Tu número de WhatsApp personal donde recibirás la notificación de los pedidos
 const MI_NUMERO_NOTIFICACION = '51963737843@s.whatsapp.net';
 
 // 3. Inicializar Google Gemini API
@@ -24,19 +24,27 @@ const PROMPT_VENTAS = `
 Eres un asesor de ventas directo, conciso y muy persuasivo para nuestra agencia de desarrollo web.
 
 DATOS DEL SERVICIO Y PAGO:
-- Producto: Solo vendemos LANDING PAGES (Páginas de aterrizaje profesionales con botón directo a WhatsApp).
+- Producto: Solo vendemos LANDING PAGES (Páginas de aterrizaje profesionales diseñadas desde cero, nunca con plantillas, optimizadas con botón directo a WhatsApp).
 - Precio: S/ 350 (pago único).
-- Modalidades de Pago: Aceptamos pago completo de S/ 350 o un adelanto del 50% (S/ 175) para iniciar y el saldo contra entrega.
+- Modalidades de Pago: Pago completo de S/ 350 o adelanto del 50% (S/ 175) para iniciar y el saldo contra entrega.
 - Datos de Yape:
   • Número: 963737843
   • Titular: Kattia de la Cruz
 
+PORTAFOLIO DE TRABAJOS REALIZADOS:
+Si el cliente pide ver ejemplos, modelos o tu portafolio de trabajos anteriores, envíale estos enlaces según su rubro o todos juntos:
+- 🏗️ Arquiduo Studio (Arquitectura): https://arquiduo-studio.web.app
+- 🛍️ Click & Go Perú (Skincare / Catálogo): https://clickandgo-pe.netlify.app
+- 🔧 Soluciones Rápidas (Servicio Técnico): https://soluciones-linea-blanca.web.app
+- 💆 Joyas Spa (Spa / Masajes): https://joyas-spa.web.app
+Aclara que cada diseño se hace 100% a la medida desde cero según su negocio.
+
 REGLAS DE CONVERSACIÓN Y CIERRE:
 1. BREVEDAD EXTREMA: Responde en máximo 2 a 3 oraciones cortas y amicales.
 2. CIERRE Y DATO DE PAGO: Si el cliente confirma que quiere comprar, dice que sí o pregunta cómo pagar, dale de inmediato las opciones de Yape:
-   "¡Genial! Puedes realizar el Yape del 50% (S/ 175) o el pago total (S/ 350) al 963737843 a nombre de Kattia de la Cruz. Por favor reenvíame el comprobante por aquí para verificarlo."
-3. RECOPILACIÓN POST-PAGO: Si el cliente ya pagó o pregunta qué datos necesitas, indícale:
-   "Para armar tu Landing Page, por favor envíame en un solo mensaje: 1. Nombre de tu negocio, 2. Una breve descripción o lista de tus productos/servicios, y 3. El enlace a tu red social principal (Instagram/Facebook)."
+   "¡Excelente! Puedes realizar el Yape del 50% (S/ 175) o el pago total (S/ 350) al 963737843 a nombre de Kattia de la Cruz. Por favor reenvíame el comprobante por aquí para verificarlo."
+3. RECOPILACIÓN POST-PAGO: Si el cliente solicita los requisitos post-pago, indícale:
+   "Para armar tu Landing Page, por favor envíame en un solo mensaje: 1. Nombre de tu negocio, 2. Breve descripción o lista de tus productos/servicios, y 3. El enlace a tu red social principal (Instagram/Facebook)."
 `;
 
 const PROMPT_YAPE = `
@@ -50,7 +58,7 @@ Extrae obligatoriamente la siguiente información en formato texto simple:
 6. Nro. de operación
 
 Si el pago es válido por S/ 175 o S/ 350 a Kattia de la Cruz:
-Indícale amablemente al cliente que el pago fue verificado con éxito y pídele que a continuación envíe el Nombre de su negocio, descripción de sus servicios y sus redes sociales para empezar el proyecto.
+Indícale amablemente al cliente que el pago fue verificado con éxito y pídele que envíe el nombre de su negocio, descripción de sus servicios y sus redes sociales para empezar el proyecto.
 Si no es legible o no corresponde, indica amablemente que no se pudo validar la imagen.
 `;
 
@@ -108,7 +116,7 @@ async function procesarMensaje(sock, msg) {
         ]);
       } catch (e) {
         console.warn('[YAPE] Reintentando con modelo secundario por alta demanda...');
-        const fallbackModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
+        const fallbackModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
         result = await fallbackModel.generateContent([
           PROMPT_YAPE,
           { inlineData: { data: base64Image, mimeType: 'image/jpeg' } }
@@ -148,7 +156,7 @@ async function procesarMensaje(sock, msg) {
       } catch (e) {
         console.warn('[VENTAS] Reintentando generación con modelo secundario...');
         const fallbackModel = genAI.getGenerativeModel({ 
-          model: 'gemini-1.5-flash-latest',
+          model: 'gemini-1.5-flash',
           systemInstruction: PROMPT_VENTAS
         });
         const chatFallback = fallbackModel.startChat();
@@ -196,7 +204,6 @@ async function iniciarBot() {
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
-    // Detectar cuando Baileys está listo para solicitar el código (evento qr o inicio de conexión sin registro)
     if (!sock.authState.creds.registered && !codigoSolicitado && (qr || connection === 'connecting')) {
       codigoSolicitado = true;
       let numeroTelefono = (process.env.BOT_PHONE_NUMBER || "51963737843").replace(/[^0-9]/g, '');
