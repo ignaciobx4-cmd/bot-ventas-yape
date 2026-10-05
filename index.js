@@ -2,7 +2,7 @@ import makeWASocket, { useMultiFileAuthState, DisconnectReason, downloadContentF
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import express from 'express';
 
-// 1. Servidor Express para Render
+// 1. Servidor Express para mantener activo el proceso en Render
 const app = express();
 const port = process.env.PORT || 10000;
 
@@ -23,7 +23,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const PALABRAS_CLAVE_WEB = ['web', 'landing', 'pagina', 'página', 'precio', 'cotizacion', 'cotización', 'portafolio', 'ejemplo', 'diseño', 'desarrollo', 'yape', 'cuanto', 'cuánto'];
 const chatsActivosBot = new Set();
 
-// LISTA DE MODELOS GRATUITOS EN OPENROUTER (se prueban en orden de prioridad)
+// LISTA DE MODELOS GRATUITOS EN OPENROUTER (OpenRouter elegirá automáticamente el primero disponible)
 const MODELOS_GRATUITOS = [
   'meta-llama/llama-3.3-70b-instruct:free',
   'google/gemini-2.0-flash-lite-001:free',
@@ -75,7 +75,7 @@ Si no es legible o no corresponde, indica amablemente que no se pudo validar la 
 `;
 
 /**
- * Función para descargar imágenes de Baileys de forma segura a Buffer
+ * Descarga una imagen enviada por WhatsApp en un Buffer seguro
  */
 async function descargarImagenBuffer(msg) {
   try {
@@ -95,7 +95,7 @@ async function descargarImagenBuffer(msg) {
 }
 
 /**
- * Función para llamar a los modelos gratuitos de OpenRouter con fallback automático
+ * Consulta modelos gratuitos de OpenRouter con logs detallados
  */
 async function consultarOpenRouterGratuito(mensajeUsuario) {
   try {
@@ -117,6 +117,8 @@ async function consultarOpenRouterGratuito(mensajeUsuario) {
     });
 
     if (!response.ok) {
+      const errorDetalle = await response.text();
+      console.error('Detalle del error devuelto por OpenRouter:', errorDetalle);
       throw new Error(`OpenRouter HTTP Error: ${response.status}`);
     }
 
@@ -129,7 +131,7 @@ async function consultarOpenRouterGratuito(mensajeUsuario) {
 }
 
 /**
- * Envía la ficha de notificación a tu WhatsApp personal
+ * Notificación a tu WhatsApp personal
  */
 async function notificarPedidoAAdmin(sock, datos) {
   const mensajeFicha = `
@@ -176,7 +178,7 @@ async function procesarMensaje(sock, msg) {
 
     const tieneContextoWeb = PALABRAS_CLAVE_WEB.some(palabra => textoMinuscula.includes(palabra));
 
-    // Filtro contextual
+    // Filtro para ignorar chats antiguos sin contexto comercial
     if (!chatsActivosBot.has(from)) {
       if (ahora - timestampMensaje > diezDiasEnMs && !tieneContextoWeb) {
         console.log(`[IGNORADO] Chat antiguo (>10 días) sin contexto web: ${numeroRemitente}`);
@@ -185,7 +187,7 @@ async function procesarMensaje(sock, msg) {
       chatsActivosBot.add(from);
     }
 
-    // 1. PROCESAR IMÁGENES (Uso de Gemini)
+    // 1. PROCESAR IMÁGENES (Único uso de Gemini)
     if (messageType === 'imageMessage') {
       console.log(`[YAPE - GEMINI] Procesando imagen de ${from}`);
       await sock.sendMessage(from, { text: '🔍 Verificando comprobante de pago...' });
@@ -217,7 +219,7 @@ async function procesarMensaje(sock, msg) {
       return;
     }
 
-    // 2. PROCESAR TEXTO (OpenRouter Gratis)
+    // 2. PROCESAR TEXTO (OpenRouter Gratuito)
     if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
       if (!textoUsuario) return;
 
