@@ -23,13 +23,11 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const PALABRAS_CLAVE_WEB = ['web', 'landing', 'pagina', 'página', 'precio', 'cotizacion', 'cotización', 'portafolio', 'ejemplo', 'diseño', 'desarrollo', 'yape', 'cuanto', 'cuánto'];
 const chatsActivosBot = new Set();
 
-// LISTA DE MODELOS GRATUITOS EN OPENROUTER (OpenRouter elegirá automáticamente el primero disponible)
+// LISTA DE MODELOS GRATUITOS EN OPENROUTER (Máximo 3 según las reglas de OpenRouter)
 const MODELOS_GRATUITOS = [
   'meta-llama/llama-3.3-70b-instruct:free',
   'google/gemini-2.0-flash-lite-001:free',
-  'deepseek/deepseek-r1:free',
-  'qwen/qwen-2.5-72b-instruct:free',
-  'mistralai/mistral-7b-instruct:free'
+  'deepseek/deepseek-r1:free'
 ];
 
 const PROMPT_VENTAS = `
