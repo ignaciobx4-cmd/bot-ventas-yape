@@ -16,30 +16,34 @@ app.listen(port, () => {
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const PROMPT_VENTAS = `
-Eres un asistente virtual experto en ventas para nuestra agencia de desarrollo web.
-Tu objetivo es brindar información clara sobre creación de páginas web, landing pages y soluciones digitales.
-Sé amable, profesional, conciso y orienta al cliente hacia cerrar una venta o consulta.
+Eres un asesor de ventas directo, conciso y muy persuasivo para nuestra agencia de desarrollo web.
+
+TUS REGLAS DE ORO:
+1. BREVEDAD EXTREMA: Responde SIEMPRE en un máximo de 2 a 3 oraciones cortas. No envíes párrafos largos ni listas pesadas.
+2. PRODUCTO ÚNICO: Solo vendemos LANDING PAGES (Páginas de aterrizaje). No hacemos e-commerce complejo, pasarelas de pago online ni sistemas de reserva.
+3. ENFOQUE Y BENEFICIO: Explicamos que la Landing Page le da a su negocio una imagen 100% profesional para captar más clientes y ventas.
+4. MODO DE CONTACTO: Todas las Landing Pages incluyen un botón directo que lleva al cliente desde la web hasta el WhatsApp del negocio con un mensaje automático para cerrar la compra o cotización.
+
+ESTILO:
+Amical, directo, vendedor y súper fácil de leer en el celular.
 `;
 
 const PROMPT_YAPE = `
-Analiza la siguiente imagen y determina si es un comprobante de pago válido de Yape.
+Analiza la imagen y determina si es un comprobante de pago válido de Yape.
 Extrae obligatoriamente la siguiente información en formato texto simple:
 1. ¿Es un comprobante de Yape válido? (Sí / No)
 2. Monto yapeado (S/)
 3. Nombre del destinatario
 4. Nombre del emisor (si figura)
-5. Fecha y hora de la transacción
+5. Fecha y hora
 6. Nro. de operación
-Si no es un comprobante de Yape legible, indica amablemente que no se pudo validar la imagen.
+Si no es legible, indica amablemente que no se pudo validar la imagen.
 `;
 
 async function procesarMensaje(sock, msg) {
   try {
     const from = msg.key.remoteJid;
     if (!from || from.endsWith('@g.us') || msg.key.fromMe) return;
-
-    // FILTRO: Si deseas ignorar contactos guardados, descomenta la siguiente línea:
-    // if (sock.store?.contacts[from]?.name) return;
 
     const messageType = Object.keys(msg.message)[0];
 
@@ -51,9 +55,8 @@ async function procesarMensaje(sock, msg) {
       const buffer = await sock.downloadMediaMessage(msg);
       const base64Image = buffer.toString('base64');
 
-      const model = genAI.getGenerativeModel({ 
-        model: 'gemini-3.8-flash' 
-      });
+      // USAR MODELO OFICIAL ESTABLE
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
       const result = await model.generateContent([
         PROMPT_YAPE,
@@ -77,8 +80,9 @@ async function procesarMensaje(sock, msg) {
 
       console.log(`[VENTAS] Mensaje de ${from}: ${textoUsuario}`);
 
+      // MODELO OFICIAL ESTABLE CON SYSTEM INSTRUCTION
       const model = genAI.getGenerativeModel({ 
-        model: 'gemini-3.8-flash',
+        model: 'gemini-1.5-flash',
         systemInstruction: PROMPT_VENTAS
       });
 
@@ -90,6 +94,13 @@ async function procesarMensaje(sock, msg) {
     }
   } catch (error) {
     console.error('Error al procesar el mensaje:', error);
+    // Respuesta de respaldo si la API de Google sufre un microparpadeo
+    const from = msg.key.remoteJid;
+    if (from) {
+      await sock.sendMessage(from, { 
+        text: '¡Hola! En este momento estamos recibiendo muchas consultas. Por favor escríbeme tu duda sobre nuestras Landing Pages y te responderé en breve.' 
+      });
+    }
   }
 }
 
