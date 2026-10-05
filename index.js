@@ -2,7 +2,7 @@ import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeys
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import express from 'express';
 
-// 1. Servidor Express para mantener vivo el proceso en Render
+// 1. Servidor Express para Render
 const app = express();
 const port = process.env.PORT || 10000;
 
@@ -143,16 +143,14 @@ async function iniciarBot() {
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
 
-    // Solicitar el código de vinculación únicamente cuando la conexión ya esté lista
-    if (!sock.authState.creds.registered && !pairingCodeRequested && (connection === 'connecting' || connection === 'open')) {
+    // Generar código de vincular cuando la conexión esté 100% abierta y estable
+    if (!sock.authState.creds.registered && !pairingCodeRequested && connection === 'open') {
       pairingCodeRequested = true;
       let numeroTelefono = (process.env.BOT_PHONE_NUMBER || "51963737843").replace(/[^0-9]/g, '');
 
       console.log(`[AUTH] Solicitando código de vinculación para: ${numeroTelefono}...`);
 
       try {
-        // Esperar 3 segundos para asegurar que el socket esté listo
-        await new Promise(resolve => setTimeout(resolve, 3000));
         const code = await sock.requestPairingCode(numeroTelefono);
         console.log(`\n==================================================`);
         console.log(`CÓDIGO DE VINCULACIÓN EN WHATSAPP: ${code}`);
