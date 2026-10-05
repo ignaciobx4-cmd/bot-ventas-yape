@@ -2,19 +2,19 @@ import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeys
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import express from 'express';
 
-// Servidor Express para mantener vivo el Web Service en Render
+// 1. Servidor Express para mantener vivo el proceso en Render
 const app = express();
 const port = process.env.PORT || 10000;
 
 app.get('/', (req, res) => {
-  res.send('Bot de WhatsApp de Agencia Web Activo');
+  res.send('Bot de WhatsApp activo 24/7');
 });
 
 app.listen(port, () => {
   console.log(`Servidor activo en el puerto ${port}`);
 });
 
-// Inicializar Google Gemini API
+// 2. Inicializar Google Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const PROMPT_VENTAS = `
@@ -45,10 +45,10 @@ Si no es legible, indica amablemente que no se pudo validar la imagen.
 async function procesarMensaje(sock, msg) {
   try {
     const from = msg.key.remoteJid;
-    // Ignorar chats de grupos, mensajes enviados por ti mismo o notificaciones del sistema
+    // Ignorar chats de grupos, mensajes enviados por el propio bot o notificaciones
     if (!from || from.endsWith('@g.us') || msg.key.fromMe) return;
 
-    // OPCIONAL: Descomenta la siguiente línea si deseas ignorar los contactos guardados en tu agenda personal:
+    // FILTRO OPCIONAL: Si deseas ignorar contactos guardados de tu agenda personal, descomenta la siguiente línea:
     // if (sock.store?.contacts[from]?.name) return;
 
     const messageType = Object.keys(msg.message)[0];
@@ -113,22 +113,29 @@ async function iniciarBot() {
   const sock = makeWASocket({
     auth: state,
     printQRInTerminal: false,
-    syncFullHistory: false, // Desactiva la sincronización pesada para evitar fallos de buffer
-    markOnlineOnConnect: false
+    syncFullHistory: false, // Evita descargar chats viejos para evitar errores de buffer
+    markOnlineOnConnect: false,
+    browser: ["Ubuntu", "Chrome", "20.0.04"] // Emula un navegador estándar estable
   });
 
   sock.ev.on('creds.update', saveCreds);
 
-  // Solicitar Código de Emparejamiento por teléfono si la sesión aún no está vinculada
+  // Generar código de vinculación si la sesión aún no está conectada
   if (!sock.authState.creds.registered) {
-    const numeroTelefono = process.env.BOT_PHONE_NUMBER || "51963737843"; 
+    let numeroTelefono = (process.env.BOT_PHONE_NUMBER || "51963737843").replace(/[^0-9]/g, ''); 
     
+    console.log(`[AUTH] Solicitando código de vinculación para: ${numeroTelefono}...`);
+
     setTimeout(async () => {
-      const code = await sock.requestPairingCode(numeroTelefono);
-      console.log(`\n==================================================`);
-      console.log(`CÓDIGO DE VINCULACIÓN EN WHATSAPP: ${code}`);
-      console.log(`==================================================\n`);
-    }, 3000);
+      try {
+        const code = await sock.requestPairingCode(numeroTelefono);
+        console.log(`\n==================================================`);
+        console.log(`CÓDIGO DE VINCULACIÓN EN WHATSAPP: ${code}`);
+        console.log(`==================================================\n`);
+      } catch (err) {
+        console.error("Error al generar el código de vinculación:", err);
+      }
+    }, 6000);
   }
 
   sock.ev.on('connection.update', (update) => {
