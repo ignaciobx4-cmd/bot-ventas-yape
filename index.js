@@ -20,15 +20,20 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const PROMPT_VENTAS = `
 Eres un asesor de ventas directo, conciso y muy persuasivo para nuestra agencia de desarrollo web.
 
-TUS REGLAS DE ORO:
-1. BREVEDAD EXTREMA: Responde SIEMPRE en un máximo de 2 a 3 oraciones cortas. No envíes párrafos largos ni listas pesadas.
-2. PRODUCTO ÚNICO: Solo vendemos LANDING PAGES (Páginas de aterrizaje). No hacemos e-commerce complejo, pasarelas de pago online ni sistemas de reserva.
-3. PRECIO FIJO: El precio de la Landing Page es SIEMPRE de 350 soles (S/ 350) pago único. Si preguntan costo o precio, diles este valor exacto sin rodeos.
-4. ENFOQUE Y BENEFICIO: Explicamos que la Landing Page le da a su negocio una imagen 100% profesional para captar más clientes y ventas.
-5. MODO DE CONTACTO: Todas las Landing Pages incluyen un botón directo que lleva al cliente desde la web hasta el WhatsApp del negocio con un mensaje automático para cerrar la compra o cotización.
+DATOS DEL SERVICIO Y PAGO:
+- Producto: Solo vendemos LANDING PAGES (Páginas de aterrizaje profesionales con botón a WhatsApp).
+- Precio: S/ 350 (pago único).
+- Datos de Yape:
+  • Número: 963737843
+  • Nombre: Kattia de la Cruz
 
-ESTILO:
-Amical, directo, vendedor y súper fácil de leer en el celular.
+REGLAS DE RESPUESTA:
+1. BREVEDAD EXTREMA: Responde en máximo 2 a 3 oraciones cortas.
+2. INSTRUCCIÓN DE PAGO (CLAVE): Si el cliente dice que SÍ quiere comprar, está listo para empezar, o pregunta "¿cómo pago?", "dame el número", "cómo realizo el pago", DEJA de hacer preguntas de venta y dale directamente los datos de Yape:
+   "Puedes realizar el Yape de S/ 350 al 963737843 a nombre de Kattia de la Cruz. Envíame la captura o comprobante por aquí para verificarlo e iniciar tu proyecto de inmediato."
+3. NO REPETIR PREGUNTAS: Si el cliente ya confirmó que quiere comprar, no le preguntes de nuevo "¿Empezamos?" ni le pidas que escriba por WhatsApp (ya está en WhatsApp).
+
+ESTILO: Amical, directo y profesional.
 `;
 
 const PROMPT_YAPE = `
@@ -36,17 +41,17 @@ Analiza la siguiente imagen y determina si es un comprobante de pago válido de 
 Extrae obligatoriamente la siguiente información en formato texto simple:
 1. ¿Es un comprobante de Yape válido? (Sí / No)
 2. Monto yapeado (S/)
-3. Nombre del destinatario
+3. Nombre del destinatario (Debe corresponder o ser similar a Kattia de la Cruz)
 4. Nombre del emisor (si figura)
 5. Fecha y hora
 6. Nro. de operación
-Si no es legible, indica amablemente que no se pudo validar la imagen.
+Si el pago es válido por S/ 350 a Kattia de la Cruz, indícales que el pago fue verificado con éxito y que en breve iniciaremos la elaboración de su Landing Page.
+Si no es legible o no corresponde, indica amablemente que no se pudo validar la imagen.
 `;
 
 async function procesarMensaje(sock, msg) {
   try {
     const from = msg.key.remoteJid;
-    // Ignorar chats de grupos, mensajes enviados por el propio bot o notificaciones
     if (!from || from.endsWith('@g.us') || msg.key.fromMe) return;
 
     const messageType = Object.keys(msg.message)[0];
@@ -67,7 +72,7 @@ async function procesarMensaje(sock, msg) {
           { inlineData: { data: base64Image, mimeType: 'image/jpeg' } }
         ]);
       } catch (e) {
-        console.warn('[YAPE] Reintentando con modelo alternativo por alta demanda...');
+        console.warn('[YAPE] Reintentando con modelo alternativo...');
         const fallbackModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
         result = await fallbackModel.generateContent([
           PROMPT_YAPE,
@@ -80,7 +85,7 @@ async function procesarMensaje(sock, msg) {
       return;
     }
 
-    // 2. PROCESAR TEXTO (Asistente de Ventas de Landing Pages)
+    // 2. PROCESAR TEXTO (Asistente de Ventas)
     if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
       const textoUsuario = msg.message.conversation || msg.message.extendedTextMessage?.text;
       if (!textoUsuario) return;
@@ -126,14 +131,13 @@ async function iniciarBot() {
   const sock = makeWASocket({
     auth: state,
     printQRInTerminal: false,
-    syncFullHistory: false, // Evita descargar chats viejos para prevenir errores de buffer
+    syncFullHistory: false,
     markOnlineOnConnect: false,
     browser: ["Ubuntu", "Chrome", "20.0.04"]
   });
 
   sock.ev.on('creds.update', saveCreds);
 
-  // Solicitud de código de vinculación si la sesión aún no existe
   if (!sock.authState.creds.registered) {
     let numeroTelefono = (process.env.BOT_PHONE_NUMBER || "51963737843").replace(/[^0-9]/g, ''); 
     
