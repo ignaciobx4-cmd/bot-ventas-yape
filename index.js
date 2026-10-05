@@ -138,25 +138,30 @@ async function iniciarBot() {
 
   sock.ev.on('creds.update', saveCreds);
 
-  if (!sock.authState.creds.registered) {
-    let numeroTelefono = (process.env.BOT_PHONE_NUMBER || "51963737843").replace(/[^0-9]/g, ''); 
-    
-    console.log(`[AUTH] Solicitando código de vinculación para: ${numeroTelefono}...`);
+  let pairingCodeRequested = false;
 
-    setTimeout(async () => {
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect } = update;
+
+    // Solicitar el código de vinculación únicamente cuando la conexión ya esté lista
+    if (!sock.authState.creds.registered && !pairingCodeRequested && (connection === 'connecting' || connection === 'open')) {
+      pairingCodeRequested = true;
+      let numeroTelefono = (process.env.BOT_PHONE_NUMBER || "51963737843").replace(/[^0-9]/g, '');
+
+      console.log(`[AUTH] Solicitando código de vinculación para: ${numeroTelefono}...`);
+
       try {
+        // Esperar 3 segundos para asegurar que el socket esté listo
+        await new Promise(resolve => setTimeout(resolve, 3000));
         const code = await sock.requestPairingCode(numeroTelefono);
         console.log(`\n==================================================`);
         console.log(`CÓDIGO DE VINCULACIÓN EN WHATSAPP: ${code}`);
         console.log(`==================================================\n`);
       } catch (err) {
         console.error("Error al generar el código de vinculación:", err);
+        pairingCodeRequested = false;
       }
-    }, 6000);
-  }
-
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect } = update;
+    }
 
     if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
