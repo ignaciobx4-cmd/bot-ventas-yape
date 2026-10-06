@@ -7,7 +7,7 @@ const app = express();
 const port = process.env.PORT || 10000;
 
 app.get('/', (req, res) => {
-  res.send('Bot de WhatsApp activo 24/7');
+  res.send('Bot de WhatsApp Inteligente activo 24/7');
 });
 
 app.listen(port, () => {
@@ -21,41 +21,46 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Palabras clave para detectar intención comercial
-const PALABRAS_CLAVE_WEB = ['web', 'landing', 'pagina', 'página', 'precio', 'cotizacion', 'cotización', 'portafolio', 'ejemplo', 'diseño', 'desarrollo', 'yape', 'cuanto', 'cuánto'];
+const PALABRAS_CLAVE_WEB = ['web', 'landing', 'pagina', 'página', 'precio', 'cotizacion', 'cotización', 'portafolio', 'ejemplo', 'diseño', 'desarrollo', 'yape', 'cuanto', 'cuánto', 'interesado', 'listo'];
 const chatsActivosBot = new Set();
 
-// MODELOS RESPALDO PARA OPENROUTER (Slugs gratuitos y activos actualmente)
+// Memoria en vivo para almacenar el historial conversacional reciente por cliente (Máximo 10 mensajes por chat)
+const historialConversaciones = new Map();
+
+// MODELOS RESPALDO PARA OPENROUTER
 const MODELOS_OPENROUTER = [
   'meta-llama/llama-3.3-70b-instruct:free',
   'deepseek/deepseek-r1:free',
   'google/gemini-2.0-flash-exp:free'
 ];
 
-const PROMPT_VENTAS = `
-Eres un asesor de ventas directo, conciso y muy persuasivo para nuestra agencia de desarrollo web.
+const PROMPT_VENTAS_SISTEMA = `
+Eres el asesor de ventas principal y mano derecha de Ignacio en nuestra agencia de desarrollo web. Tu objetivo es ser extremadamente fluido, inteligente y natural al continuar la conversación con el cliente.
 
-DATOS DEL SERVICIO Y PAGO:
-- Producto: Solo vendemos LANDING PAGES (Páginas de aterrizaje profesionales diseñadas desde cero, nunca con plantillas, optimizadas con botón directo a WhatsApp).
-- Precio: S/ 350 (pago único).
-- Modalidades de Pago: Pago completo de S/ 350 o adelanto del 50% (S/ 175) para iniciar y el saldo contra entrega.
-- Datos de Yape:
-  • Número: 963737843
+CONTEXTO DE NUESTROS SERVICIOS Y PRECIOS:
+- Producto: Vendemos exclusivamente LANDING PAGES profesionales (Páginas de aterrizaje a la medida, diseñadas desde cero, optimizadas para ventas con botón directo a WhatsApp).
+- Precio Oficial: S/ 350 (Pago único).
+- Modalidad de Pago: Pago total de S/ 350 o un adelanto del 50% (S/ 175) para iniciar el diseño y el 50% restante contra entrega.
+- Datos de Yape para Pago:
+  • Número Yape: 963737843
   • Titular: Kattia de la Cruz
 
-PORTAFOLIO DE TRABAJOS REALIZADOS:
-Si el cliente pide ver ejemplos, modelos o tu portafolio de trabajos anteriores, envíale estos enlaces según su rubro o todos juntos:
+NUESTRO PORTAFOLIO DE TRABAJOS:
+Si el cliente solicita ver trabajos anteriores, ejemplos o portafolio, compártele estos enlaces:
 - 🏗️ Arquiduo Studio (Arquitectura): https://arquiduo-studio.web.app
 - 🛍️ Click & Go Perú (Skincare / Catálogo): https://clickandgo-pe.netlify.app
 - 🔧 Soluciones Rápidas (Servicio Técnico): https://soluciones-linea-blanca.web.app
 - 💆 Joyas Spa (Spa / Masajes): https://joyas-spa.web.app
-Aclara que cada diseño se hace 100% a la medida desde cero según el negocio del cliente.
+Menciona siempre que cada sitio se crea 100% personalizado para su marca.
 
-REGLAS DE CONVERSACIÓN Y CIERRE:
-1. BREVEDAD EXTREMA: Responde en máximo 2 a 3 oraciones cortas y amicales.
-2. CIERRE Y DATO DE PAGO: Si el cliente confirma que quiere comprar, dice que sí o pregunta cómo pagar, dale de inmediato las opciones de Yape:
-   "¡Excelente! Puedes realizar el Yape del 50% (S/ 175) o el pago total (S/ 350) al 963737843 a nombre de Kattia de la Cruz. Por favor reenvíame el comprobante por aquí para verificarlo."
-3. RECOPILACIÓN POST-PAGO: Si el cliente solicita los requisitos post-pago, indícale:
-   "Para armar tu Landing Page, por favor envíame en un solo mensaje: 1. Nombre de tu negocio, 2. Breve descripción o lista de tus productos/servicios, y 3. El enlace a tu red social principal (Instagram/Facebook)."
+REGLAS INTELIGENTES DE COMPORTAMIENTO:
+1. CONTINUIDAD Y CONTEXTO: Lee el historial previo antes de responder. Si el cliente o el asesor humano ya habían hablado antes sobre la página web o el interés en el proyecto, retoma la conversación de manera natural.
+2. DISPOSICIÓN Y CIERRE DIRECTO DE VENTA: Si el cliente dice expresiones como "sí estoy interesado", "ya estoy listo", "dame los datos", "cómo hacemos para empezar", "mándame el Yape" o similares:
+   - VE DIRECTO AL PAGO Y CIERRA LA VENTA en un solo mensaje claro y amable.
+   - Pauta exactamente esto:
+     "¡Excelente! Podemos empezar de inmediato. Puedes realizar el pago total de S/ 350 o el adelanto del 50% (S/ 175) al Yape 963737843 a nombre de Kattia de la Cruz. Apenas realices el Yape, reenvíame el comprobante por aquí para verificarlo e iniciar tu proyecto."
+3. RESPUESTA A PREGUNTAS TÉCNICAS O DUDAS: Si el cliente hace preguntas sobre qué incluye, tiempos de entrega o funcionamiento, respóndelas amablemente en 2 o 3 oraciones cortas y finaliza preguntándole si está listo para empezar.
+4. TONO PROFESIONAL Y DIRECTO: No des explicaciones largas. Máximo 2 a 3 oraciones por respuesta.
 `;
 
 const PROMPT_YAPE = `
@@ -69,9 +74,28 @@ Extrae obligatoriamente la siguiente información en formato texto simple:
 6. Nro. de operación
 
 Si el pago es válido por S/ 175 o S/ 350 a Kattia de la Cruz:
-Indícale amablemente al cliente que el pago fue verificado con éxito y pídele que envíe el nombre de su negocio, descripción de sus servicios y sus redes sociales para empezar el proyecto.
+Indícale amablemente al cliente que el pago fue verificado con éxito y pídele que envíe en un solo mensaje:
+1. Nombre de su negocio.
+2. Descripción breve de sus productos o servicios.
+3. Enlace a sus redes sociales (Instagram/Facebook) o logo para iniciar.
 Si no es legible o no corresponde, indica amablemente que no se pudo validar la imagen.
 `;
+
+/**
+ * Guarda el mensaje en el historial contextual del cliente
+ */
+function guardarEnHistorial(chatId, role, content) {
+  if (!historialConversaciones.has(chatId)) {
+    historialConversaciones.set(chatId, []);
+  }
+  const historial = historialConversaciones.get(chatId);
+  historial.push({ role, content });
+
+  // Mantener solo los últimos 10 mensajes para ahorrar contexto y tokens
+  if (historial.length > 10) {
+    historial.shift();
+  }
+}
 
 /**
  * Descarga una imagen enviada por WhatsApp en un Buffer seguro
@@ -94,16 +118,22 @@ async function descargarImagenBuffer(msg) {
 }
 
 /**
- * 1ª Opción Principal: Groq Cloud (llama-3.1-8b-instant)
+ * 1ª Opción Principal: Groq Cloud (llama-3.1-8b-instant) enviando historial completo
  */
-async function consultarGroqCloud(mensajeUsuario) {
+async function consultarGroqCloud(chatId) {
   if (!GROQ_API_KEY) {
     console.warn('[GROQ] GROQ_API_KEY no configurada en las variables de entorno.');
     return null;
   }
 
+  const historialChat = historialConversaciones.get(chatId) || [];
+  const messagesPayload = [
+    { role: 'system', content: PROMPT_VENTAS_SISTEMA },
+    ...historialChat
+  ];
+
   try {
-    console.log('[GROQ] Consultando con Groq (llama-3.1-8b-instant)...');
+    console.log(`[GROQ] Consultando con historial completo de ${chatId}...`);
     
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -113,11 +143,8 @@ async function consultarGroqCloud(mensajeUsuario) {
       },
       body: JSON.stringify({
         model: 'llama-3.1-8b-instant',
-        messages: [
-          { role: 'system', content: PROMPT_VENTAS },
-          { role: 'user', content: mensajeUsuario }
-        ],
-        temperature: 0.5,
+        messages: messagesPayload,
+        temperature: 0.4,
         max_tokens: 300
       })
     });
@@ -126,7 +153,7 @@ async function consultarGroqCloud(mensajeUsuario) {
       const data = await response.json();
       const respuesta = data.choices[0]?.message?.content;
       if (respuesta) {
-        console.log('✅ [GROQ] Respuesta generada exitosamente.');
+        console.log('✅ [GROQ] Respuesta contextual generada exitosamente.');
         return respuesta;
       }
     }
@@ -141,12 +168,18 @@ async function consultarGroqCloud(mensajeUsuario) {
 }
 
 /**
- * 2ª Opción (Fallback): OpenRouter probando modelos uno por uno
+ * 2ª Opción (Fallback): OpenRouter con envío de historial completo
  */
-async function consultarOpenRouterGratuito(mensajeUsuario) {
+async function consultarOpenRouterGratuito(chatId) {
+  const historialChat = historialConversaciones.get(chatId) || [];
+  const messagesPayload = [
+    { role: 'system', content: PROMPT_VENTAS_SISTEMA },
+    ...historialChat
+  ];
+
   for (const modelo of MODELOS_OPENROUTER) {
     try {
-      console.log(`[OPENROUTER FALLBACK] Intentando modelo: ${modelo}`);
+      console.log(`[OPENROUTER FALLBACK] Intentando con modelo: ${modelo}`);
 
       const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
@@ -158,10 +191,7 @@ async function consultarOpenRouterGratuito(mensajeUsuario) {
         },
         body: JSON.stringify({
           model: modelo,
-          messages: [
-            { role: 'system', content: PROMPT_VENTAS },
-            { role: 'user', content: mensajeUsuario }
-          ]
+          messages: messagesPayload
         })
       });
 
@@ -186,14 +216,14 @@ async function consultarOpenRouterGratuito(mensajeUsuario) {
 }
 
 /**
- * Gestor principal para mensajes de texto
+ * Gestor inteligente para mensajes de texto
  */
-async function obtenerRespuestaVentas(mensajeUsuario) {
-  let respuesta = await consultarGroqCloud(mensajeUsuario);
+async function obtenerRespuestaVentas(chatId) {
+  let respuesta = await consultarGroqCloud(chatId);
   
   if (!respuesta) {
-    console.warn('⚠️️ [SISTEMA] Groq falló. Activando respaldo de OpenRouter...');
-    respuesta = await consultarOpenRouterGratuito(mensajeUsuario);
+    console.warn('⚠️ [SISTEMA] Groq falló. Activando respaldo de OpenRouter...');
+    respuesta = await consultarOpenRouterGratuito(chatId);
   }
 
   return respuesta;
@@ -204,21 +234,19 @@ async function obtenerRespuestaVentas(mensajeUsuario) {
  */
 async function notificarPedidoAAdmin(sock, datos) {
   const mensajeFicha = `
-🚨 *NUEVO PEDIDO REGISTRADO* 🚨
+🚨 *NUEVO PEDIDO O SEGUIMIENTO REGISTRADO* 🚨
 ==================================
 👤 *Cliente:* ${datos.nombreCliente}
 📱 *WhatsApp:* https://wa.me/${datos.telefono}
 
-💰 *DETALLES DEL PAGO:*
-• *Monto Registrado:* S/ ${datos.monto}
-• *Estado:* ${datos.monto >= 350 ? 'PAGO COMPLETO (S/ 350)' : 'ADELANTO 50% (S/ 175)'}
+💰 *DETALLES DEL PAGO / ESTADO:*
+• *Mensaje/Monto:* ${datos.monto}
 
-🏢 *DATOS DEL NEGOCIO Y PROYECTO:*
-• *Mensaje del Cliente:*
+🏢 *INFORMACIÓN PROPORCIONADA:*
 "${datos.detalleCliente}"
 
 ==================================
-📌 *Acción requerida:* Contactar al cliente para solicitar logo/fotos si no los envió y proceder al maquetado.
+📌 *Acción requerida:* Revisar el chat en WhatsApp para proceder con el maquetado de la Landing Page.
 `;
 
   try {
@@ -234,8 +262,9 @@ async function procesarMensaje(sock, msg) {
     if (!msg.message) return;
 
     const from = msg.key.remoteJid;
-    if (!from || from.endsWith('@g.us') || msg.key.fromMe) return;
+    if (!from || from.endsWith('@g.us')) return;
 
+    const isFromMe = msg.key.fromMe;
     const numeroRemitente = from.replace(/[^0-9]/g, '');
     const timestampMensaje = (msg.messageTimestamp || Date.now() / 1000) * 1000;
     const diezDiasEnMs = 10 * 24 * 60 * 60 * 1000;
@@ -245,9 +274,19 @@ async function procesarMensaje(sock, msg) {
     const textoUsuario = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
     const textoMinuscula = textoUsuario.toLowerCase();
 
+    // SI EL MENSAJE LO ENVIAS TÚ MISMO (IGNACIO) A UN CLIENTE:
+    // Guardamos tu mensaje en el historial del cliente para que el bot entienda lo que tú le dijiste.
+    if (isFromMe) {
+      if (textoUsuario) {
+        guardarEnHistorial(from, 'assistant', textoUsuario);
+        console.log(`[HISTORIAL HUMANO] Registrado mensaje de Ignacio para ${from}: "${textoUsuario}"`);
+      }
+      return;
+    }
+
     const tieneContextoWeb = PALABRAS_CLAVE_WEB.some(palabra => textoMinuscula.includes(palabra));
 
-    // Filtro contextual
+    // Filtro de contexto o antigüedad
     if (!chatsActivosBot.has(from)) {
       if (ahora - timestampMensaje > diezDiasEnMs && !tieneContextoWeb) {
         console.log(`[IGNORADO] Chat antiguo (>10 días) sin contexto web: ${numeroRemitente}`);
@@ -256,7 +295,7 @@ async function procesarMensaje(sock, msg) {
       chatsActivosBot.add(from);
     }
 
-    // 1. PROCESAR IMÁGENES (Uso exclusivo de Gemini 1.5 Flash para Yape)
+    // 1. PROCESAR IMÁGENES (Yape / Gemini)
     if (messageType === 'imageMessage') {
       console.log(`[YAPE - GEMINI] Procesando imagen de ${from}`);
       await sock.sendMessage(from, { text: '🔍 Verificando comprobante de pago...' });
@@ -277,34 +316,44 @@ async function procesarMensaje(sock, msg) {
       const respuestaYape = result.response.text();
       await sock.sendMessage(from, { text: respuestaYape });
 
+      guardarEnHistorial(from, 'user', '[El cliente envió una imagen/comprobante de Yape]');
+      guardarEnHistorial(from, 'assistant', respuestaYape);
+
       if (respuestaYape.toLowerCase().includes('sí') || respuestaYape.toLowerCase().includes('éxito')) {
         await notificarPedidoAAdmin(sock, {
           nombreCliente: msg.pushName || 'Cliente WhatsApp',
           telefono: numeroRemitente,
-          monto: '175 / 350',
-          detalleCliente: 'Comprobante de Yape verificado.'
+          monto: '175 / 350 (Comprobante Recibido)',
+          detalleCliente: 'Comprobante de Yape verificado por Gemini.'
         });
       }
       return;
     }
 
-    // 2. PROCESAR TEXTO (Groq con Fallback a OpenRouter)
+    // 2. PROCESAR TEXTO DEL CLIENTE
     if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
       if (!textoUsuario) return;
 
-      console.log(`[VENTAS] Mensaje de ${from}: ${textoUsuario}`);
+      console.log(`[VENTAS ENTRANTE] Mensaje de ${from}: ${textoUsuario}`);
 
-      const respuestaVentas = await obtenerRespuestaVentas(textoUsuario);
+      // Registrar mensaje entrante del cliente en el historial
+      guardarEnHistorial(from, 'user', textoUsuario);
+
+      // Obtener respuesta contextual procesando todo el historial
+      const respuestaVentas = await obtenerRespuestaVentas(from);
 
       if (respuestaVentas) {
         await sock.sendMessage(from, { text: respuestaVentas });
+        // Registrar respuesta enviada por el bot
+        guardarEnHistorial(from, 'assistant', respuestaVentas);
       }
 
-      if (textoUsuario.length > 25 && (textoUsuario.toLowerCase().includes('negocio') || textoUsuario.toLowerCase().includes('https://') || textoUsuario.toLowerCase().includes('instagram'))) {
+      // Notificar si el cliente proporciona datos del proyecto o confirma compra
+      if (textoUsuario.length > 20 && (textoUsuario.toLowerCase().includes('negocio') || textoUsuario.toLowerCase().includes('listo') || textoUsuario.toLowerCase().includes('http') || textoUsuario.toLowerCase().includes('instagram'))) {
         await notificarPedidoAAdmin(sock, {
           nombreCliente: msg.pushName || 'Cliente WhatsApp',
           telefono: numeroRemitente,
-          monto: 'Por confirmar',
+          monto: 'Interés / Cierre de venta',
           detalleCliente: textoUsuario
         });
       }
@@ -359,7 +408,7 @@ async function iniciarBot() {
         iniciarBot();
       }
     } else if (connection === 'open') {
-      console.log('✅ Bot de WhatsApp conectado exitosamente.');
+      console.log('✅ Bot de WhatsApp inteligente conectado exitosamente.');
     }
   });
 
