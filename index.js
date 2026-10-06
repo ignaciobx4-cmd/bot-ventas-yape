@@ -24,11 +24,11 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const PALABRAS_CLAVE_WEB = ['web', 'landing', 'pagina', 'página', 'precio', 'cotizacion', 'cotización', 'portafolio', 'ejemplo', 'diseño', 'desarrollo', 'yape', 'cuanto', 'cuánto'];
 const chatsActivosBot = new Set();
 
-// MODELOS RESPALDO PARA OPENROUTER (Si Groq falla)
+// MODELOS RESPALDO PARA OPENROUTER (Slugs gratuitos y activos actualmente)
 const MODELOS_OPENROUTER = [
-  'meta-llama/llama-3.2-11b-vision-instruct:free',
-  'meta-llama/llama-3.1-8b-instruct:free',
-  'google/gemini-2.0-flash-thinking-exp:free'
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'deepseek/deepseek-r1:free',
+  'google/gemini-2.0-flash-exp:free'
 ];
 
 const PROMPT_VENTAS = `
@@ -94,16 +94,16 @@ async function descargarImagenBuffer(msg) {
 }
 
 /**
- * 1ª Opción: Consulta principal usando Groq Cloud
+ * 1ª Opción Principal: Groq Cloud (llama-3.1-8b-instant)
  */
 async function consultarGroqCloud(mensajeUsuario) {
   if (!GROQ_API_KEY) {
-    console.warn('[GROQ] GROQ_API_KEY no encontrada en las variables de entorno.');
+    console.warn('[GROQ] GROQ_API_KEY no configurada en las variables de entorno.');
     return null;
   }
 
   try {
-    console.log('[GROQ] Intentando consulta principal con Groq (llama-3.3-70b-versatile)...');
+    console.log('[GROQ] Consultando con Groq (llama-3.1-8b-instant)...');
     
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -112,7 +112,7 @@ async function consultarGroqCloud(mensajeUsuario) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'llama-3.1-8b-instant',
         messages: [
           { role: 'system', content: PROMPT_VENTAS },
           { role: 'user', content: mensajeUsuario }
@@ -126,7 +126,7 @@ async function consultarGroqCloud(mensajeUsuario) {
       const data = await response.json();
       const respuesta = data.choices[0]?.message?.content;
       if (respuesta) {
-        console.log('✅ [GROQ] Respuesta obtenida con éxito.');
+        console.log('✅ [GROQ] Respuesta generada exitosamente.');
         return respuesta;
       }
     }
@@ -134,19 +134,19 @@ async function consultarGroqCloud(mensajeUsuario) {
     const errorTexto = await response.text();
     console.warn('[GROQ] Falló la llamada a Groq. Detalle:', errorTexto);
   } catch (err) {
-    console.error('[GROQ] Error de red o conexión con Groq:', err);
+    console.error('[GROQ] Error de conexión con Groq:', err);
   }
 
   return null;
 }
 
 /**
- * 2ª Opción (Fallback): Consulta de respaldo con OpenRouter
+ * 2ª Opción (Fallback): OpenRouter probando modelos uno por uno
  */
 async function consultarOpenRouterGratuito(mensajeUsuario) {
   for (const modelo of MODELOS_OPENROUTER) {
     try {
-      console.log(`[OPENROUTER FALLBACK] Intentando con modelo: ${modelo}`);
+      console.log(`[OPENROUTER FALLBACK] Intentando modelo: ${modelo}`);
 
       const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
@@ -169,7 +169,7 @@ async function consultarOpenRouterGratuito(mensajeUsuario) {
         const data = await response.json();
         const respuesta = data.choices[0]?.message?.content;
         if (respuesta) {
-          console.log(`✅ [OPENROUTER] Respuesta obtenida con éxito de: ${modelo}`);
+          console.log(`✅ [OPENROUTER] Respuesta generada con éxito de: ${modelo}`);
           return respuesta;
         }
       }
@@ -181,20 +181,18 @@ async function consultarOpenRouterGratuito(mensajeUsuario) {
     }
   }
 
-  console.error('❌ [OPENROUTER] Todos los modelos de respaldo en OpenRouter fallaron.');
+  console.error('❌ [OPENROUTER] Todos los modelos de respaldo fallaron.');
   return null;
 }
 
 /**
- * Generador principal de respuestas de texto (Groq con Fallback a OpenRouter)
+ * Gestor principal para mensajes de texto
  */
 async function obtenerRespuestaVentas(mensajeUsuario) {
-  // Intentar primero con Groq Cloud
   let respuesta = await consultarGroqCloud(mensajeUsuario);
   
-  // Si Groq falla por cualquier razón, pasamos a OpenRouter automáticamente
   if (!respuesta) {
-    console.warn('⚠️ [SISTEMA] Groq falló o no está disponible. Activando fallback a OpenRouter...');
+    console.warn('⚠️️ [SISTEMA] Groq falló. Activando respaldo de OpenRouter...');
     respuesta = await consultarOpenRouterGratuito(mensajeUsuario);
   }
 
@@ -258,7 +256,7 @@ async function procesarMensaje(sock, msg) {
       chatsActivosBot.add(from);
     }
 
-    // 1. PROCESAR IMÁGENES (Uso exclusivo de Gemini 1.5 Flash)
+    // 1. PROCESAR IMÁGENES (Uso exclusivo de Gemini 1.5 Flash para Yape)
     if (messageType === 'imageMessage') {
       console.log(`[YAPE - GEMINI] Procesando imagen de ${from}`);
       await sock.sendMessage(from, { text: '🔍 Verificando comprobante de pago...' });
@@ -294,7 +292,7 @@ async function procesarMensaje(sock, msg) {
     if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
       if (!textoUsuario) return;
 
-      console.log(`[VENTAS] Mensaje entrante de ${from}: ${textoUsuario}`);
+      console.log(`[VENTAS] Mensaje de ${from}: ${textoUsuario}`);
 
       const respuestaVentas = await obtenerRespuestaVentas(textoUsuario);
 
