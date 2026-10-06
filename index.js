@@ -20,6 +20,12 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+// 🚫 NÚMEROS EXCLUIDOS (El bot NUNCA responderá ni procesará imágenes de estos números)
+const NUMEROS_IGNORADOS = [
+  '51963737843', // Tu número personal
+  '51922239186'  // Número de tu novia (Excluido de cualquier respuesta automática)
+];
+
 // Palabras clave para detectar intención comercial
 const PALABRAS_CLAVE_WEB = ['web', 'landing', 'pagina', 'página', 'precio', 'cotizacion', 'cotización', 'portafolio', 'ejemplo', 'diseño', 'desarrollo', 'yape', 'cuanto', 'cuánto', 'interesado', 'listo'];
 const chatsActivosBot = new Set();
@@ -27,11 +33,11 @@ const chatsActivosBot = new Set();
 // Memoria en vivo para almacenar el historial conversacional reciente por cliente (Máximo 10 mensajes por chat)
 const historialConversaciones = new Map();
 
-// MODELOS RESPALDO PARA OPENROUTER
+// LOS 3 MEJORES MODELOS DE RESPALDO EN OPENROUTER
 const MODELOS_OPENROUTER = [
-  'meta-llama/llama-3.3-70b-instruct:free',
-  'deepseek/deepseek-r1:free',
-  'google/gemini-2.0-flash-exp:free'
+  'nvidia/nemotron-3.5-lightning:free',
+  'google/gemma-4-31b-it:free',
+  'openrouter/free'
 ];
 
 const PROMPT_VENTAS_SISTEMA = `
@@ -91,7 +97,7 @@ function guardarEnHistorial(chatId, role, content) {
   const historial = historialConversaciones.get(chatId);
   historial.push({ role, content });
 
-  // Mantener solo los últimos 10 mensajes para ahorrar contexto y tokens
+  // Mantener solo los últimos 10 mensajes para ahorrar contexto
   if (historial.length > 10) {
     historial.shift();
   }
@@ -118,7 +124,7 @@ async function descargarImagenBuffer(msg) {
 }
 
 /**
- * 1ª Opción Principal: Groq Cloud (llama-3.1-8b-instant) enviando historial completo
+ * 1ª Opción Principal: Groq Cloud (openai/gpt-oss-120b)
  */
 async function consultarGroqCloud(chatId) {
   if (!GROQ_API_KEY) {
@@ -133,7 +139,7 @@ async function consultarGroqCloud(chatId) {
   ];
 
   try {
-    console.log(`[GROQ] Consultando con historial completo de ${chatId}...`);
+    console.log(`[GROQ] Consultando con openai/gpt-oss-120b para ${chatId}...`);
     
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -142,7 +148,7 @@ async function consultarGroqCloud(chatId) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'llama-3.1-8b-instant',
+        model: 'openai/gpt-oss-120b',
         messages: messagesPayload,
         temperature: 0.4,
         max_tokens: 300
@@ -168,7 +174,7 @@ async function consultarGroqCloud(chatId) {
 }
 
 /**
- * 2ª Opción (Fallback): OpenRouter con envío de historial completo
+ * 2ª Opción (Fallback): OpenRouter probando los 3 modelos seleccionados
  */
 async function consultarOpenRouterGratuito(chatId) {
   const historialChat = historialConversaciones.get(chatId) || [];
@@ -266,6 +272,13 @@ async function procesarMensaje(sock, msg) {
 
     const isFromMe = msg.key.fromMe;
     const numeroRemitente = from.replace(/[^0-9]/g, '');
+
+    // 🚫 VERIFICACIÓN DE NÚMEROS IGNORADOS (Si es el número de tu novia o el tuyo, ignora por completo)
+    if (NUMEROS_IGNORADOS.includes(numeroRemitente)) {
+      console.log(`[IGNORADO - CONTACTO EXCLUIDO] Mensaje/Imagen de: ${numeroRemitente}`);
+      return;
+    }
+
     const timestampMensaje = (msg.messageTimestamp || Date.now() / 1000) * 1000;
     const diezDiasEnMs = 10 * 24 * 60 * 60 * 1000;
     const ahora = Date.now();
@@ -274,8 +287,7 @@ async function procesarMensaje(sock, msg) {
     const textoUsuario = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
     const textoMinuscula = textoUsuario.toLowerCase();
 
-    // SI EL MENSAJE LO ENVIAS TÚ MISMO (IGNACIO) A UN CLIENTE:
-    // Guardamos tu mensaje en el historial del cliente para que el bot entienda lo que tú le dijiste.
+    // REGISTRO DE MENSAJES ENVIADOS POR TI MISMO (IGNACIO):
     if (isFromMe) {
       if (textoUsuario) {
         guardarEnHistorial(from, 'assistant', textoUsuario);
@@ -295,8 +307,14 @@ async function procesarMensaje(sock, msg) {
       chatsActivosBot.add(from);
     }
 
-    // 1. PROCESAR IMÁGENES (Yape / Gemini)
+    // 1. PROCESAR IMÁGENES (Yape / Gemini 1.5 Flash)
     if (messageType === 'imageMessage') {
+      // Si la foto no viene de una conversación con interés de venta previo, se ignora.
+      if (!tieneContextoWeb && !chatsActivosBot.has(from)) {
+        console.log(`[IMAGEN IGNORADA] Foto enviada por ${numeroRemitente} sin contexto previo de ventas.`);
+        return;
+      }
+
       console.log(`[YAPE - GEMINI] Procesando imagen de ${from}`);
       await sock.sendMessage(from, { text: '🔍 Verificando comprobante de pago...' });
 
@@ -336,19 +354,19 @@ async function procesarMensaje(sock, msg) {
 
       console.log(`[VENTAS ENTRANTE] Mensaje de ${from}: ${textoUsuario}`);
 
-      // Registrar mensaje entrante del cliente en el historial
+      // Registrar mensaje del cliente en el historial
       guardarEnHistorial(from, 'user', textoUsuario);
 
-      // Obtener respuesta contextual procesando todo el historial
+      // Obtener respuesta contextual
       const respuestaVentas = await obtenerRespuestaVentas(from);
 
       if (respuestaVentas) {
         await sock.sendMessage(from, { text: respuestaVentas });
-        // Registrar respuesta enviada por el bot
+        // Registrar respuesta del bot en el historial
         guardarEnHistorial(from, 'assistant', respuestaVentas);
       }
 
-      // Notificar si el cliente proporciona datos del proyecto o confirma compra
+      // Notificar si el cliente muestra interés claro o datos
       if (textoUsuario.length > 20 && (textoUsuario.toLowerCase().includes('negocio') || textoUsuario.toLowerCase().includes('listo') || textoUsuario.toLowerCase().includes('http') || textoUsuario.toLowerCase().includes('instagram'))) {
         await notificarPedidoAAdmin(sock, {
           nombreCliente: msg.pushName || 'Cliente WhatsApp',
