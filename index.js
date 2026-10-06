@@ -16,6 +16,7 @@ app.listen(port, () => {
 
 // 2. Configuración de Variables
 const MI_NUMERO_NOTIFICACION = '51963737843@s.whatsapp.net';
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -23,8 +24,8 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const PALABRAS_CLAVE_WEB = ['web', 'landing', 'pagina', 'página', 'precio', 'cotizacion', 'cotización', 'portafolio', 'ejemplo', 'diseño', 'desarrollo', 'yape', 'cuanto', 'cuánto'];
 const chatsActivosBot = new Set();
 
-// LISTA DE MODELOS GRATUITOS ACTIVOS EN OPENROUTER
-const MODELOS_GRATUITOS = [
+// MODELOS RESPALDO PARA OPENROUTER (Si Groq falla)
+const MODELOS_OPENROUTER = [
   'meta-llama/llama-3.2-11b-vision-instruct:free',
   'meta-llama/llama-3.1-8b-instruct:free',
   'google/gemini-2.0-flash-thinking-exp:free'
@@ -73,7 +74,7 @@ Si no es legible o no corresponde, indica amablemente que no se pudo validar la 
 `;
 
 /**
- * Función para descargar imágenes de Baileys a un Buffer seguro
+ * Descarga una imagen enviada por WhatsApp en un Buffer seguro
  */
 async function descargarImagenBuffer(msg) {
   try {
@@ -93,12 +94,59 @@ async function descargarImagenBuffer(msg) {
 }
 
 /**
- * Consulta modelos gratuitos de OpenRouter uno a uno (Fallback manual)
+ * 1ª Opción: Consulta principal usando Groq Cloud
+ */
+async function consultarGroqCloud(mensajeUsuario) {
+  if (!GROQ_API_KEY) {
+    console.warn('[GROQ] GROQ_API_KEY no encontrada en las variables de entorno.');
+    return null;
+  }
+
+  try {
+    console.log('[GROQ] Intentando consulta principal con Groq (llama-3.3-70b-versatile)...');
+    
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'system', content: PROMPT_VENTAS },
+          { role: 'user', content: mensajeUsuario }
+        ],
+        temperature: 0.5,
+        max_tokens: 300
+      })
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      const respuesta = data.choices[0]?.message?.content;
+      if (respuesta) {
+        console.log('✅ [GROQ] Respuesta obtenida con éxito.');
+        return respuesta;
+      }
+    }
+
+    const errorTexto = await response.text();
+    console.warn('[GROQ] Falló la llamada a Groq. Detalle:', errorTexto);
+  } catch (err) {
+    console.error('[GROQ] Error de red o conexión con Groq:', err);
+  }
+
+  return null;
+}
+
+/**
+ * 2ª Opción (Fallback): Consulta de respaldo con OpenRouter
  */
 async function consultarOpenRouterGratuito(mensajeUsuario) {
-  for (const modelo of MODELOS_GRATUITOS) {
+  for (const modelo of MODELOS_OPENROUTER) {
     try {
-      console.log(`[OPENROUTER] Intentando consulta con modelo: ${modelo}`);
+      console.log(`[OPENROUTER FALLBACK] Intentando con modelo: ${modelo}`);
 
       const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
@@ -121,7 +169,7 @@ async function consultarOpenRouterGratuito(mensajeUsuario) {
         const data = await response.json();
         const respuesta = data.choices[0]?.message?.content;
         if (respuesta) {
-          console.log(`[OPENROUTER] Respuesta exitosa de: ${modelo}`);
+          console.log(`✅ [OPENROUTER] Respuesta obtenida con éxito de: ${modelo}`);
           return respuesta;
         }
       }
@@ -133,8 +181,24 @@ async function consultarOpenRouterGratuito(mensajeUsuario) {
     }
   }
 
-  console.error('[OPENROUTER] Todos los modelos gratuitos de la lista fallaron.');
+  console.error('❌ [OPENROUTER] Todos los modelos de respaldo en OpenRouter fallaron.');
   return null;
+}
+
+/**
+ * Generador principal de respuestas de texto (Groq con Fallback a OpenRouter)
+ */
+async function obtenerRespuestaVentas(mensajeUsuario) {
+  // Intentar primero con Groq Cloud
+  let respuesta = await consultarGroqCloud(mensajeUsuario);
+  
+  // Si Groq falla por cualquier razón, pasamos a OpenRouter automáticamente
+  if (!respuesta) {
+    console.warn('⚠️ [SISTEMA] Groq falló o no está disponible. Activando fallback a OpenRouter...');
+    respuesta = await consultarOpenRouterGratuito(mensajeUsuario);
+  }
+
+  return respuesta;
 }
 
 /**
@@ -226,13 +290,13 @@ async function procesarMensaje(sock, msg) {
       return;
     }
 
-    // 2. PROCESAR TEXTO (OpenRouter Gratis con Rotación)
+    // 2. PROCESAR TEXTO (Groq con Fallback a OpenRouter)
     if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
       if (!textoUsuario) return;
 
-      console.log(`[VENTAS - OPENROUTER] Mensaje de ${from}: ${textoUsuario}`);
+      console.log(`[VENTAS] Mensaje entrante de ${from}: ${textoUsuario}`);
 
-      const respuestaVentas = await consultarOpenRouterGratuito(textoUsuario);
+      const respuestaVentas = await obtenerRespuestaVentas(textoUsuario);
 
       if (respuestaVentas) {
         await sock.sendMessage(from, { text: respuestaVentas });
